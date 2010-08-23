@@ -1,0 +1,25 @@
+Changes
+MANIFEST
+Makefile.PL
+README
+Unpack.pm
+file_unpack.pl
+
+t/00-load.t
+t/manifest.t
+t/pod-coverage.t
+t/pod.t
+t/01-init.t
+t/02-mime.t
+t/03-exclude.t
+
+t/data/Desktop.directory
+t/data/IPA-snippet.pfa
+t/data/Times-Roman-snippet.afm
+t/data/columns-snippet.fo
+t/data/empty.odt
+t/data/ruhyphal.tex
+t/data/test2.tga
+t/data/wzbc-2009-06-28-17-00.m3u
+t/data/xterm-snippet.desktop
+META.yml                                 Module meta-data (added by MakeMaker)

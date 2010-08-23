@@ -1,0 +1,74 @@
+Revision history for File-Unpack
+
+0.17	jw, Mon Aug 23 11:36:04 CEST 2010
+	Made the test suite run again with -t
+
+0.16	jw, Mon Aug 23 01:28:09 CEST 2010
+	added tar handler. debugged dir unpacking, copy-in, 
+	destdir=jail, and def_mime_handler_fmt.
+
+0.15	jw, Mon Aug 16 01:08:32 CEST 2010
+	destroyed unpack(): recreated subdir code. To be completed.
+
+0.14	jw, Thu Aug 12 00:14:00 CEST 2010
+	Using Text::Sprintf::Named for parsing builtin_mime_handlers.
+	Added _fmt_run_shellcmd(). Tested _run_mime_handler. Finished.
+
+0.13	jw, Wed Aug 11 10:30:49 CEST 2010
+	regression fixed: application/oasis.*.text no longer had +zip suffix.
+
+0.12	jw, Fri Aug  6 01:38:50 CEST 2010
+	Possibly finalized _run_mime_handler(), needs testing.
+
+0.11    jw, Tue Aug  3 20:15:04 CEST 2010
+	Reporting @missing_unpacker in log.
+
+0.10	jw, Tue Aug  3 00:30:25 CEST 2010
+	File::Unppack::run() finished. Oops, IPC::Run opens all redirects before init. 
+	Jail construction done in _run_mime_handler(). Jail descruction TBD.
+	@builtin_mime_handlers now reflects the harness structure, knows which
+	suffixes to remove, and uses words in curly braces as templates, to
+	make it less ugly.  Delayed template substitution into
+	_run_mime_handler(), as extra array-refs are no good idea in a harness.
+
+0.09    jw, Sun Aug  1 23:42:19 CEST 2010
+	Added self->{done}, to protect against re-unpacking; enabled recursion in unpack.
+	More consistent use of C<...> in POD. _run_mime_handler() prepared for IPC::Run.
+	Changed use_mime_handler() to parse an array, rather than a format string.
+
+0.08	jw, Mon Jul 12 00:54:09 CEST 2010
+	Added mime handler methods: use_mime_handler_dir(), use_mime_handler(),
+	find_mime_handler() using $self->{mime_orcish};
+	Added builtin handlers to new(), using "%{destdir} ..." format string syntax
+	Added _prep_configdir(), shell and json support.
+	Continued unpack() to dispatch into mime handlers.
+	Started _run_mime_handler()
+
+0.07    jw, Fri Jul  9 01:19:19 CEST 2010
+	Added support for stacked compressions recognition without looking 
+	at file suffixes at all:
+	mime(file => '.tar.gz.lzma') says: "application/x-tar+gzip+lzma"
+	Hack to make tar.bz2 appear as "application/x-tar+bzip2"
+	tar.bz2.lzma does not work, that is why I call bz2 support a hack.
+	Now we can work on efficient unpack helpers.
+
+0.06	jw, Thu Jul  8 00:31:24 CEST 2010
+	using Compress::Raw::Lzma::AloneDecoder instead  of lzcat.
+
+0.05	jw, Wed Jun 30 01:35:17 CEST 2010
+	started unpack(), added _not_excluded(),
+	added file_unpack.pl for testing.
+
+0.04	jw, Mon Jun 28 21:38:31 CEST 2010
+	added exclude(), with tests & docs.
+	added _fs_check() and _fs_warn() logic.
+	added and used _bytes_unit().
+
+0.03	jw, Sun Jun 27 03:09:21 CEST 2010
+	new() completed, private log(), logf() added.
+
+0.02	jw, Sat Jun 26 21:55:12 CEST 2010
+	mime() documented, implemented, tested.
+
+0.01    jw, Sat Jun 26 12:45:63 CEST 2010
+        First version, skeleton drafted.
