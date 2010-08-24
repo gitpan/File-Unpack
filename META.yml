@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               File-Unpack
-version:            0.18
+version:            0.19
 abstract:           An aggressive archive file unpacker, based on mime-types
 author:
     - Juergen Weigert <jw@suse.de>

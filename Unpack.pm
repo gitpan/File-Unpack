@@ -15,6 +15,8 @@
 # TODO: 
 # evaluate File::Extract - Extract Text From Arbitrary File Types 
 #       (HTML, PDF, Plain, RTF, Excel)
+# call _run_mime_handler() with 'correct' destdir in cups-1.2.4/*/cups.jar
+#	harmless.
 
 package File::Unpack;
 
@@ -38,7 +40,7 @@ use File::Copy ();
 use JSON;
 use String::ShellQuote;		# used in _prep_configdir 
 use IPC::Run;			# implements File::Unpack::run()
-use Text::Sprintf::Named;	# used to parse builtin_mime_handlers
+use Text::Sprintf::Named;	# used to parse @builtin_mime_handlers
 use Cwd 'getcwd';		# run(), moves us there and back. 
 use Data::Dumper;
 
@@ -48,11 +50,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.18
+Version 0.19
 
 =cut
 
-our $VERSION = '0.18';
+our $VERSION = '0.19';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -62,21 +64,47 @@ delete $ENV{ENV};
 # Anything else works with 1024.
 my $UNCOMP_BUFSZ = 1024;
 
-sub _builtin_mime_handlers
+my @builtin_mime_handlers = (
+  # mimetype pattern          # suffix pattern      # command with redirects, as defined with IPC::Run::run
+  [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/lzcat)],        qw(< %(src)s > %(destfile)s) ],
+  [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/xz      -dc -f %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=%bzip2',     qr{\.bz2$}i,          [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=%gzip',      qr{\.gz$}i,           [qw(/usr/bin/gzip -dc -f %(src)s)], qw(> %(destfile)s) ],
+
+  # xml.summary.Mono.Security.Authenticode is twice inside of monodoc-1.0.4.tar.gz/Mono.zip/ -> use -o
+  [ 'application=zip',        qr{\.(zip|jar|sar)$}i,  [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
+  [ 'application=%zip',       qr{\.(zip|jar|sar)$}i,  [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
+
+  [ 'application=%tar',       qr{\.(tar|gem)$}i,      [\&_locate_tar,  qw(-xf %(src)s)] ],
+  [ 'application=%tar+bzip2', qr{\.tar\.bz2$}i,       [\&_locate_tar, qw(-jxf %(src)s)] ],
+  [ 'application=%tar+gzip',  qr{\.t(ar\.gz|gz)$}i,   [\&_locate_tar, qw(-zxf %(src)s)] ],
+  [ 'application=%rpm',       qr{\.(src\.r|s|r)pm$}i, [qw(/usr/bin/rpm2cpio %(src)s)], '|', [\&_locate_cpio_i] ],
+);
+
+sub _locate_tar
 {
+  my $self = shift;
+  return @{$self->{_locate_tar}} if defined $self->{_locate_tar};
 
-  ## FIXME:
-  # running all these tests can take a lot of time.
-  # We could delay that into find_mime_handler() by using a sub here that 
-  # returns the array.
+  # cannot use tar -C %(destdir)s,  we rely on being chdir'ed inside already :-)
+  # E: /bin/tar: /tmp/xxx/_VASn/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_: Cannot chdir: Permission denied
 
-  my @tar = ('/bin/tar');
+  my @tar = (-f '/bin/tar' ? '/bin/tar' : '/usr/bin/tar' );
   ## osc co loves to create directories with : in them. 
   ## Tell tar to accept such directories as directores.
   push @tar, "--force-local" 
-    unless run([@tar, "--force-local", "--help"], { out_err => '/dev/null' });
+    unless $self->run([@tar, "--force-local", "--help"], { out_err => '/dev/null' });
   push @tar, "--no-unquote"  
-    unless run([@tar, "--no-unquote", "--help"],  { out_err => '/dev/null'});
+    unless $self->run([@tar, "--no-unquote", "--help"],  { out_err => '/dev/null'});
+
+  $self->{_locate_tar} = \@tar;
+  return @tar;
+}
+
+sub _locate_cpio_i
+{
+  my $self = shift;
+  return @{$self->{_locate_cpio_i}} if defined $self->{_locate_cpio_i};
 
   my @cpio_i = ('/usr/bin/cpio', '-idm');
   $cpio_i[1] .= 'u' 
@@ -86,24 +114,9 @@ sub _builtin_mime_handlers
   push @cpio_i, '--no-absolute-filenames'
     unless run([@cpio_i, '--no-absolute-filenames', '--usage'], {out_err => '/dev/null'});
 
- return (
-    # mimetype pattern          # suffix pattern      # command with redirects, as defined with IPC::Run::run
-    [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/lzcat)],        qw(< %(src)s > %(destfile)s) ],
-    [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/xz      -dc -f %(src)s)], qw(> %(destfile)s) ],
-    [ 'application=%bzip2',     qr{\.bz2$}i,          [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
-    [ 'application=%tar',       qr{\.tar(\._)?$}i,          [@tar, qw(-xf %(src)s)] ],
-    [ 'application=%tar+bzip2', qr{\.tar\.bz2(\._)?$}i,     [@tar, qw(-jxf %(src)s)] ],
-    [ 'application=%tar+gzip',  qr{\.t(ar\.gz|gz)(\._)?$}i, [@tar, qw(-zxf %(src)s)] ],
-    [ 'application=%rpm',       qr{\.(src\.rpm|spm|rpm)$}i, [qw(/usr/bin/rpm2cpio %(src)s | ), @cpio_i] ],
- );
-
-# cannot use tar -C %(destdir)s,  we rely on being chdir'ed inside already :-)
-# E: /bin/tar: /tmp/xxx/_VASn/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_: Cannot chdir: Permission denied
-
+  @{$self->{_locate_cpio_i}} = \@cpio_i;
+  return @cpio_i;
 }
-
-
-
 
 =head1 SYNOPSIS
 
@@ -336,11 +349,12 @@ sub new
   $obj{maxfilesize} = '100M' unless defined $obj{maxfilesize};
   $obj{maxfilesize} = _bytes_unit($obj{maxfilesize});
 
-
   mkpath($obj{destdir}); # abs_path is unreliable if destdir does not exist
   $obj{destdir} = Cwd::fast_abs_path($obj{destdir});
   # used in unpack() to jail mime_handlers deep inside destdir:
   $obj{dot_dot_safeguard} = 20 unless defined $obj{dot_dot_safeguard};
+  $obj{jail_chmod0} ||= 0;
+
   carp "We are running as root: Malicious archives may clobber your filesystem.\n" unless $>;
 
   if (ref $obj{logfile} eq 'SCALAR' or !(ref $obj{logfile}))
@@ -366,7 +380,7 @@ sub new
   $obj{exclude}{empty_dir} = 1  unless defined $obj{exclude}{empty_dir};
   $obj{exclude}{empty_file} = 1 unless defined $obj{exclude}{empty_file};
 
-  for my $h (_builtin_mime_handlers())
+  for my $h (@builtin_mime_handlers)
     {
       use_mime_handler(\%obj, @$h);
     }
@@ -463,8 +477,15 @@ destination_path may receive 'permission denied' conditions.
 C<unpack> prepares 20 empty subdirectory levels and chdirs the unpacker 
 in there. This number can be adjusted using C<new(dot_dot_safeguard => 20)>.
 A directory 20 levels up from the current working dir has mode 0 while 
-the mime-handler runs. This is a special hack to cope with badly constructed 
-tar balls. This helps against relative paths, but not against absolute paths.
+the mime-handler runs. C<unpack> can optionally chmod(0) the parent of the subdirectory 
+after it chdirs the unpacker inside. Use C<new(jail_chmod0 => 1)> for this, default 
+is off.
+
+These are special hacks to keep badly constructed 
+tar balls, cpio, or zip archives at bay.
+
+Please note, that all this helps against relative paths, but not against absolute 
+paths in archives.
 It is the responsibility of mime-handlers to not create absolute paths.
 
 A missing mime-handler is skipped. A mime-handler is expected to return an
@@ -530,7 +551,7 @@ sub unpack
         unless $subdir =~ s{^\Q$self->{input_dir}\E/+}{};
     }
 
-  print STDERR "unpack: r=$self->{recursion_level} in_dir=$in_dir, in_file=$in_file, destdir=$destdir\n" if $self->{verbose};
+  print STDERR "unpack: r=$self->{recursion_level} in_dir=$in_dir, in_file=$in_file, destdir=$destdir\n" if $self->{verbose} > 1;
 
   my @missing_unpacker;
 
@@ -540,7 +561,7 @@ sub unpack
         {
           my @f = sort grep { $_ ne '.' && $_ ne '..' } readdir DIR;
 	  closedir DIR;
-	  print "dir = @f\n";
+	  print STDERR "dir = @f\n" if $self->{verbose} > 1;
 	  for my $f (@f) 
 	    {
 	      next if $self->{exclude}{re} && $f =~ m{$self->{exclude}{re}};
@@ -558,7 +579,7 @@ sub unpack
   else
     {
       if ($self->_not_excluded($subdir, $in_file) and
-          !$self->{done}{$archive})
+          !defined($self->{done}{$archive}))
 	{
 	  my $m = $self->mime($archive);
 	  my ($h, $more) = $self->find_mime_handler($m);
@@ -596,17 +617,26 @@ sub unpack
 	      
 	      # Either shorten the name from e.g. foo.txt.bz2 to foo.txt or append 
 	      # something: foo.pdf to foo.pdf._
-	      $new_name .= "._" unless $h->{suff_re} and $new_name =~ s{$h->{suff_re}$}{};
+	      $new_name .= "._" unless $h->{suff_re} and $new_name =~ s{$h->{suff_re}(\._)?$}{};
+
+	      ## if consumer of logf wants to do progress indication himself, 
+	      ## then tell him what we do before we start. (Our timer tick code may be analternative...)
+	      #
+	      # if ($archive =~ m{^\Q$self->{destdir}\E})
+	      #   {
+	      #     $self->logf($archive => { unpacking => $h->{fmt_p} });
+	      #   }
 	        
 	      my $unpacked = $self->_run_mime_handler($h, $archive, $destdir, 
 	      				$new_name, $m->[0], $m->[2], $self->{configdir});
 
 	      if ($archive =~ m{^\Q$self->{destdir}\E})
 	        {
-	          $self->{done}{$archive}++;
+	          $self->{done}{$archive} = $unpacked;
 
 		  # to delete it, we should know if it was created during unpack.
-		  $data->{unpacked} = $h->{fmt_p};
+		  $data->{cmd} = $h->{fmt_p};
+		  $data->{unpacked} = $unpacked;
 	          $self->logf($archive => $data);
 		}
 
@@ -701,9 +731,9 @@ sub run
       $has_e_redir++ if $c =~ m{^(2>|>&$)};
       if ($c eq '|')
         {
-          push @cmd, '0<', $opt->{in} unless $has_i_redir;
+          push @run, '0<', $opt->{in} unless $has_i_redir;
 	  $has_i_redir = 'piped';
-          push @cmd, "2>", $opt->{err} unless $has_e_redir;
+          push @run, "2>", $opt->{err} unless $has_e_redir;
 	  $has_e_redir = $has_o_redir = 0;
 	}
       push @run, $c;
@@ -713,11 +743,13 @@ sub run
   push @run, "1>", $opt->{out} unless $has_o_redir;
   push @run, "2>", $opt->{err} unless $has_e_redir;
 
+# die Dumper \@run if $cmd[0][0] eq '/usr/bin/rpm2cpio';
 
   my $t	= IPC::Run::timer($opt->{every}-0.6) if $opt->{every};
   push @run, $t if $t;
 
-  my $h = IPC::Run::start @run;
+  my $h = eval { IPC::Run::start @run; };
+  return wantarray ? (undef, $@) : undef unless $h;
 
   while ($h->pumpable)
     {
@@ -731,11 +763,10 @@ sub run
 	}
     }
   $h->finish;
-  return $h->full_results if wantarray;
-  return $h->result;
+  return wantarray ? $h->full_results : $h->result;
 }
 
-=head2 File::Unpack::fmt_run_shellcmd($m->{argvv})
+=head2 File::Unpack::fmt_run_shellcmd( $m->{argvv} )
 
 Static function to pretty print the return value $m of method find_mime_handler();
 It formats a command array used with run() as a properly escaped shell command string.
@@ -748,7 +779,9 @@ sub fmt_run_shellcmd
   @a = @{$a[0]{argvv}} if ref $a[0] eq 'HASH';
   my @r = ();
   push @r, ref() ? '('.shell_quote(@$_).')' : shell_quote($_) foreach @a;
-  return join ' ', @r;
+  my $r = join ' ', @r;
+  $r =~ s{^\((.*)\)$}{$1} unless $#a;	# parenthesis around a single cmd are unneeded.
+  return $r;
 }
 
 ## not a method, officially.
@@ -758,6 +791,16 @@ sub fmt_run_shellcmd
 #
 ## fastjar extracts happily to ../../..
 ## this happens in cups-1.2.1/scripting/java/cups.jar
+#
+## FIXME:
+# "/tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4/scripting/java/cups.jar":
+#  {"cmd":"/usr/bin/unzip -P no_pw -q -o '%(src)s'",
+#   "unpacked":"/tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4/_Knw_"}
+# Two issues: 
+#   a) _run_mime_handler in /tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4
+#      should be /tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4/scripting/java
+#   b) _Knw_ should not appear ...
+#
 
 sub _run_mime_handler
 {
@@ -803,7 +846,7 @@ sub _run_mime_handler
 
   my $cwd = getcwd() or carp "cannot fetch initial working directory, getcwd: $!";
   chdir $jail or die "chdir '$jail'";
-  chmod 0, $jail_base;
+  chmod 0, $jail_base if $self->{jail_chmod0};
   # Now have fully initialzed in the parent before forking. 
   #  This is needed, as all redirect operators are executed in the parent before forking.
   # init => sub { ... } is no longer needed. sigh, I really wanted to the init sub for the chdir.
@@ -814,10 +857,9 @@ sub _run_mime_handler
       debug => ($self->{verbose} > 2) ? $self->{verbose} - 2 : 0, 
       watch => $src, every => 5, fu_obj => $self, mime_handler => $h, 
       prog => sub { $_[1]{tick}++; print "T: tick_tick $_[1]{tick}\n"; },
-      # init => sub { chdir $jail or die "chdir '$jail'"; chmod 0, $jail_base; }
     });
     
-  chmod 0700, $jail_base;
+  chmod 0700, $jail_base if $self->{jail_chmod0};
   chdir $cwd or die "cannot chdir back to cwd: chdir($cwd): $!";
 
   # loop through all _: if it only contains one item , replace it with this item,
@@ -994,10 +1036,6 @@ sub use_mime_handler
   $name =~ s{(.*/)?(.*?)=(.*?)$}{$2/$3};
 
   push @{$args[0]}, @def_mime_handler_fmt unless $#{$args[0]} or defined $args[1];
-  # my $argv0 = $args[0][0];
-
-  my $fmt_p = join ' ', map { shell_quote($_) } map { ref($_) ? @$_ : $_ } @args;
-
 
   my $pat = "^\Q$name\E\$";
   $pat =~ s{\\%}{ANY}g;
@@ -1007,7 +1045,7 @@ sub use_mime_handler
   unshift @{$self->{mime_handler}}, 
     { 
       name => $name, pat => $pat, suff_re => $suff_re, 
-      fmt_p => $fmt_p, argvv => \@args
+      fmt_p => fmt_run_shellcmd(@args), argvv => \@args
     };
 
   delete $self->{mime_orcish};	# to be rebuilt in find_mime_handler()
@@ -1099,6 +1137,7 @@ sub find_mime_handler
     {
       if ($mimetype =~ m{$h->{pat}})
         {
+	  $self->_finalize_argvv($h);
 	  unless (-f $h->{argvv}[0][0])
 	    {
 	      push @{$r->{missing}}, $h->{argvv}[0][0];
@@ -1109,6 +1148,68 @@ sub find_mime_handler
 	}
     }
   return wantarray ? (undef, $r) : undef;
+}
+
+#
+# _finalize_argvv() executes a sub in 3 places:
+# The argvv ptr itself can be a sub: 
+#   this should return an array, where the
+#   first element is the command (as an array-ref) and subsequent elements are
+#   redirects. See run() for details.
+# One of the argvv elements is a sub:
+#   this should return the command as an array-ref, if it is argvv[0],
+#   or return one or more redirects.
+# One element of argvv[0] is a sub:
+#   this should return one or more command names, options, arguments,
+#
+# Tricky part of the implementation is the in-place array expansion while iterating.
+#
+sub _finalize_argvv
+{
+  my ($self, $h) = @_;
+
+  my $update_fmt_p = 0;
+  if (ref $h->{argvv} eq 'CODE')
+    {
+      $h->{argvv} = [ $h->{argvv}->($self) ];
+      $update_fmt_p++;
+    }
+
+  # If any part of LIST is an array, "foreach" will get very confused if you add or
+  # remove elements within the loop body, for example with "splice".   So don't do
+  # that.
+  # Sigh, we want do do exactly that, a sub may replace itself by any number of elements. Use booring C-style loop.
+  my $last = $#{$h->{argvv}};
+  for (my $idx = 0; $idx <= $last; $idx++)
+    {
+      if (ref $h->{argvv}[$idx] eq 'CODE')
+        {
+	  my @r = $h->{argvv}[$idx]($self);
+	  splice @{$h->{argvv}}, $idx, 1, @r;
+	  $idx += $#r;
+	  $last +=$#r;
+          $update_fmt_p++;
+	}
+    }
+  $last = $#{$h->{argvv}};
+  for (my $idx = 0; $idx <= $last; $idx++)
+    {
+      next unless ref $h->{argvv}[$idx] eq 'ARRAY';
+      my $last1 = $#{$h->{argvv}[$idx]};
+      for (my $idx1 = 0; $idx1 <= $last1; $idx1++)
+        {
+	  if (ref $h->{argvv}[$idx][$idx1] eq 'CODE')
+	    {
+	      my @r = $h->{argvv}[$idx][$idx1]->($self);
+	      splice @{$h->{argvv}[$idx]}, $idx1, 1, @r;
+	      $idx1 += $#r;
+	      $last1 +=$#r;
+              $update_fmt_p++;
+	    }
+	}
+    }
+
+  $h->{fmt_p} = fmt_run_shellcmd($h) if $update_fmt_p;
 }
 
 =head2 minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
