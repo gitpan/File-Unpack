@@ -4,7 +4,7 @@ use ExtUtils::MakeMaker;
 
 WriteMakefile(
     NAME                => 'File::Unpack',
-    AUTHOR              => q{Juergen Weigert <jw@suse.de>},
+    AUTHOR              => q{Juergen Weigert <jnw@cpan.org>},
     VERSION_FROM        => 'Unpack.pm',
     ABSTRACT_FROM       => 'Unpack.pm',
     ($ExtUtils::MakeMaker::VERSION >= 6.3002
@@ -30,6 +30,6 @@ WriteMakefile(
 	'IPC::Run' => 0, 
 	'Text::Sprintf::Named' => 0,
     },
-    dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
+    dist                => { COMPRESS => 'bzip2 -9f', SUFFIX => 'bz2', },
     clean               => { FILES => 'File-Unpack-*' },
 );

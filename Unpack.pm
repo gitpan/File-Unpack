@@ -50,11 +50,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.19
+Version 0.20
 
 =cut
 
-our $VERSION = '0.19';
+our $VERSION = '0.20';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -120,17 +120,32 @@ sub _locate_cpio_i
 
 =head1 SYNOPSIS
 
-Quick summary of what the module does.
-
-Perhaps a little code snippet.
+File::Unpack is an aggressive unpacker for archive files. We call it aggressive, 
+because it recursivly descends into any freshly unpacked file, if it appears to be an archive itself.
+It also uncompresses files where needed. The ultimate goal of File::Unpack is
+to extract as much readable text (ascii or any other encoding) as possible.
+Most of the currently known archive file formats are supported.
 
     use File::Unpack;
 
-    my $u = File::Unpack->new();
+    my $log;
+    my $u = File::Unpack->new(logfile => \$log);
 
     my $m = $u->mime('/etc/init.d/rc');
     print "$m->[0]; charset=$m->[1]\n"
     # text/x-shellscript; charset=us-ascii
+
+    map { print "$_->{name}\n" } @{$u->mime_handler()};
+    # application/%rpm
+    # application/%tar+gzip
+    # application/%tar+bzip2
+    # ...
+
+    $u->unpack("inputfile.tar.bz2");
+    while ($log =~ m{^\s*"(.*?)":}g) # it's JSON.
+      {
+        print "$1\n"; 	# report all files unpacked
+      }
 
     ...
 
@@ -142,16 +157,14 @@ well as exclude patterns.
 
 =head1 SUBROUTINES/METHODS
 
-Beware: This module is unfinished. 
-Documentation might be ahead of implementation.
-The testsuite defines, what is actually available.
+=head2 new
 
-=head2 new(destdir => '.', logfile => \*STDOUT, maxfilesize => '100M', verbose => 1)
+my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '100M', verbose => 1);
 
 Creates an unpacker instance. Destdir must be writable; all output files and directories 
 are placed inside destdir. Subdirectories will be created in an attempt to reflect the 
 structure of the input. Destdir defaults to the current directory; relative paths 
-are resolved immediatly, so that later chdir() has no effect on destdir.
+are resolved immediatly, so that chdir() after calling new is harmless.
 
 The parameter logfile can be a reference to a scalar, a filename, or a filedescriptor.
 The logfile starts with a JSON formatted prolog, where all lines start 
@@ -167,7 +180,9 @@ easily fill up any available disk space when unpacked. Files hitting this limit 
 be silently truncated.  Check the logfile records or epilog to see if this has happened.
 BSD::Resource is used manipulate RLIMIT_FSIZE.
 
-=head2 exclude(add => ['.svn', '*.orig' ], del => '.svn', force => 1)
+=head2 exclude
+
+exclude(add => ['.svn', '*.orig' ], del => '.svn', force => 1)
 
 Defines the exclude-list for unpacking. This list is advisory for the mime-handlers. 
 The exclude-list items are shell glob patterns, where '*' or '?' never match '/'.
@@ -382,7 +397,7 @@ sub new
 
   for my $h (@builtin_mime_handlers)
     {
-      use_mime_handler(\%obj, @$h);
+      mime_handler(\%obj, @$h);
     }
 
   return bless \%obj, $class;
@@ -407,7 +422,9 @@ sub DESTROY
     }
 }
 
-=head2 unpack($archive, [$destdir])
+=head2 unpack
+
+$u->unpack($archive, [$destdir])
 
 Determines the contents of an archive and recursivly extracts its individual files.  
 An archive may be the pathname of a file or directory. The extracted contents will be 
@@ -426,7 +443,7 @@ Unpack achieves this by writing suitable prolog and epilog lines to the logfile.
 The actual unpacking is dispatched to mime-type specfic mime handlers,
 selected using C<mime>. A mime-handler can either be built-in code, or an
 external program (or shell-script) found in a directory registered with
-C<use_mime_handler_dir>.
+C<mime_handler_dir>.
 
 A mime-handler is called with 6 parameters:
 source_path, destdir, destfile, mimetype, description, and config_dir. 
@@ -662,9 +679,14 @@ sub unpack
 	}
       delete $self->{lfp};
     }
+
+  # FIXME: should return nonzero if we had any unrecoverable errors.
+  return 0;
 }
 
-=head2 run([argv0, ...], @redir, ... { init => sub ..., in, out, err, watch, every, prog, ... })
+=head2 run
+
+$u->run([argv0, ...], @redir, ... { init => sub ..., in, out, err, watch, every, prog, ... })
 
 A general purpose fork-exec wrapper, based on IPC::Run. STDIN is closed, unless you specify
 an in => as described in IPC::Run. STDERR and STDOUT are both printed to
@@ -766,7 +788,9 @@ sub run
   return wantarray ? $h->full_results : $h->result;
 }
 
-=head2 File::Unpack::fmt_run_shellcmd( $m->{argvv} )
+=head2 fmt_run_shellcmd
+
+File::Unpack::fmt_run_shellcmd( $m->{argvv} )
 
 Static function to pretty print the return value $m of method find_mime_handler();
 It formats a command array used with run() as a properly escaped shell command string.
@@ -962,9 +986,10 @@ sub _prep_configdir
 }
 
 
-=head2 use_mime_handler_dir($dir, ...)
+=head2 mime_handler_dir mime_handler
 
-=head2 use_mime_handler($mime_name, $suffix_regexp, \@argv, @redir, ...)
+$u->mime_handler_dir($dir, ...)
+$u->mime_handler($mime_name, $suffix_regexp, \@argv, @redir, ...)
 
 Registers one or more directories where external mime-handler programs are found.
 Multiple directories can be registered, They are searched in reverse order, i.e. 
@@ -1012,11 +1037,13 @@ A wildcard before the '=' sign lowers precedence more than one after it.
 
 =back
 
-The mapping takes place when C<use_mime_handler_dir> is called, later additions are 
-not recognized. C<use_mime_handler> does not do any implicit expansions. Call it
+The mapping takes place when C<mime_handler_dir> is called, later additions are 
+not recognized. C<mime_handler> does not do any implicit expansions. Call it
 multiple times with the same command and different names if needed.
 The default argument list is "%(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s" --
 this is applied, if no args are given and no redirections are given.
+
+Both methods return an ARRAY-ref of all currently known mime handlers.
 
 =cut 
 my @def_mime_handler_fmt = qw(%(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s);
@@ -1027,7 +1054,7 @@ sub _subst_args
   return $f->format({args => $_[1]});
 }
 
-sub use_mime_handler
+sub mime_handler
 {
   my ($self, $name, $suff_re, @args) = @_;
   @args = ($name) unless @args;
@@ -1049,9 +1076,10 @@ sub use_mime_handler
     };
 
   delete $self->{mime_orcish};	# to be rebuilt in find_mime_handler()
+  return $self->{mime_handler};
 }
 
-sub use_mime_handler_dir
+sub mime_handler_dir
 {
   my ($self, @dirs) = @_;
 
@@ -1109,13 +1137,15 @@ sub use_mime_handler_dir
       # now push them, sorted by prio
       for my $h (sort { $h{$a}{p} <=> $h{$b}{p} } keys %h)
         {
-	  $self->use_mime_handler($h, undef, $h{$h}{a});
+	  $self->mime_handler($h, undef, $h{$h}{a});
 	}
     }
   return $self->{mime_handler};
 }
 
-=head2 find_mime_handler($mimetype)
+=head2 find_mime_handler
+
+$u->find_mime_handler($mimetype)
 
 Returns a mime-handler suitable for unpacking the given $mimetype.
 If called in list context, a second return value indicates which 
@@ -1212,7 +1242,9 @@ sub _finalize_argvv
   $h->{fmt_p} = fmt_run_shellcmd($h) if $update_fmt_p;
 }
 
-=head2 minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
+=head2 minfree
+
+$u->minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
 
 Guard the filesystem (destdir) against becoming full during C<unpack>. 
 Before unpacking each source archive, the free space is measured and compared against three conditions:
@@ -1269,13 +1301,15 @@ sub minfree
   $self->{fs_warn} = $opt{warning} if ref $opt{warning};
 }
 
-=head2 mime($filename)
+=head2 mime
 
-=head2 mime(file => $filename)
+$u->mime($filename)
 
-=head2 mime(buf => "#!/bin ...", file => "what-was-read")
+$u->mime(file => $filename)
 
-=head2 mime(fd => \*STDIN, file => "what-was-opened")
+$u->mime(buf => "#!/bin ...", file => "what-was-read")
+
+$u->mime(fd => \*STDIN, file => "what-was-opened")
 
 Determines the mimetype (and optionally additional information) of a file.
 The file can be specified by filename, by a provided buffer or an opened filedescriptor.
@@ -1545,7 +1579,7 @@ sub mime
 
 =head1 AUTHOR
 
-Juergen Weigert, C<< <jw at suse.de> >>
+Juergen Weigert, C<< <jnw at cpan.org> >>
 
 =head1 BUGS
 

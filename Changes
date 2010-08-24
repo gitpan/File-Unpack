@@ -1,10 +1,13 @@
 Revision history for File-Unpack
 
+0.20	jw, Tue Aug 24 21:15:49 CEST 2010
+	POD polishing. Synopsis now has some illustrative code.
+
 0.19	jw, Tue Aug 24 15:42:49 CEST 2010
 	Added _finalize_argvv() to call _locate_*() functions only if 
 	find_mime_handler() needs it. Added _locate_tar() and _locate_cpio_i;
 	Converted sub _builtin_mime_handlers back into @builtin_mime_handlers;
-	Debugged run(); piping was broken.
+	Debugged run(); piping was broken. Made new(jail_chmod0 => 1) optional.
 
 0.18	jw, Tue Aug 24 02:13:47 CEST 2010
 	Added handlers for x-tar+bzip2, x-tar+gzip, x-rpm;

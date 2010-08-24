@@ -91,7 +91,7 @@ if ($mime_only)
   {
     my $u = File::Unpack->new(logfile => '/dev/null');
     my $m = $u->mime($archive);
-    $u->use_mime_handler_dir(@mime_handler_dirs);
+    $u->mime_handler_dir(@mime_handler_dirs);
     my ($h,$r) = $u->find_mime_handler($m);
     $Data::Dumper::Terse = 1;
     $Data::Dumper::Indent = 1;
@@ -103,9 +103,8 @@ if ($mime_only)
 my $u = File::Unpack->new(%opt);
 $u->exclude(vcs => $exclude_vcs);
 $u->exclude(add => \@exclude) if @exclude;
-$u->use_mime_handler_dir(@mime_handler_dirs);
+$u->mime_handler_dir(@mime_handler_dirs);
 $u->unpack($archive);
 
-delete $u->{json};
-
-die "$0: " . Dumper $u;
+#delete $u->{json};
+#die "$0: " . Dumper $u;
