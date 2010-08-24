@@ -1,5 +1,12 @@
 Revision history for File-Unpack
 
+0.18	jw, Tue Aug 24 02:13:47 CEST 2010
+	Added handlers for x-tar+bzip2, x-tar+gzip, x-rpm;
+	Converted @builtin_mime_handlers into sub _builtin_mime_handlers;
+	Converted system() tests of tar options to run() tests. Added tests for 
+	cpio too. Secured pump inside eval {}. 
+	Added fmt_run_shellcmd() to the API; thus fixed file_unpac.pl -m ...
+
 0.17	jw, Mon Aug 23 11:36:04 CEST 2010
 	Made the test suite run again with -t
 

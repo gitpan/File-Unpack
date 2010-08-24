@@ -28,6 +28,7 @@ WriteMakefile(
 	'JSON' => 0,
 	'String::ShellQuote' => 0,
 	'IPC::Run' => 0, 
+	'Text::Sprintf::Named' => 0,
     },
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'File-Unpack-*' },

@@ -1,7 +1,7 @@
 --- #YAML:1.0
 name:               File-Unpack
-version:            0.17
-abstract:           An aggressive achive file unpacker, based on mime-types
+version:            0.18
+abstract:           An aggressive archive file unpacker, based on mime-types
 author:
     - Juergen Weigert <jw@suse.de>
 license:            perl
@@ -24,6 +24,7 @@ requires:
     JSON:                 0
     String::ShellQuote:   0
     Test::More:           0
+    Text::Sprintf::Named:  0
 no_index:
     directory:
         - t

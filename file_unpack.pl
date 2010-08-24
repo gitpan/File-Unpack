@@ -92,10 +92,11 @@ if ($mime_only)
     my $u = File::Unpack->new(logfile => '/dev/null');
     my $m = $u->mime($archive);
     $u->use_mime_handler_dir(@mime_handler_dirs);
-    my $h = $u->find_mime_handler($m);
+    my ($h,$r) = $u->find_mime_handler($m);
     $Data::Dumper::Terse = 1;
     $Data::Dumper::Indent = 1;
-    print Dumper $m, $h->{fmt_p}, $h->{argv0};
+    print Dumper $m;
+    print File::Unpack::fmt_run_shellcmd($h) . "\n";
     exit 0;
   }
 

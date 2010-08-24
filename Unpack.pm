@@ -44,44 +44,65 @@ use Data::Dumper;
 
 =head1 NAME
 
-File::Unpack - An aggressive achive file unpacker, based on mime-types
+File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.17
+Version 0.18
 
 =cut
 
-our $VERSION = '0.17';
+our $VERSION = '0.18';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
 delete $ENV{ENV};
 
-my @tar = ('/bin/tar');
-## osc co loves to create directories with : in them. 
-## Tell tar to accept such directories as directores.
-push @tar, "--force-local" unless system("@tar --force-local --help > /dev/null 2>&1");
-push @tar, "--no-unquote"  unless system("@tar --no-unquote --help > /dev/null 2>&1");
-
-my @builtin_mime_handlers = (
-    # mimetype pattern      # suffix pattern      # command with redirects, as defined with IPC::Run::run
-    [ 'application=%lzma',  qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/lzcat)],        qw(< %(src)s > %(destfile)s) ],
-    [ 'application=%lzma',  qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/xz      -dc -f %(src)s)], qw(> %(destfile)s) ],
-    [ 'application=%bzip2', qr{\.bz2$}i,          [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
-    [ 'application=%tar',   qr{\.tar(\._)?$}i,    [@tar, qw(-xf %(src)s)] ],
-);
-
-# cannot use -C %(destdir)s,  we rely on being chdir'ed inside already :-)
-# E: /bin/tar: /tmp/xxx/_VASn/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_: Cannot chdir: Permission denied
-#    [ 'application=%tar',   qr{\.tar(\._)?$}i,    [@tar, qw(-C %(destdir)s -xf %(src)s)] ],
-
-
-
-
 # Compress::Raw::Bunzip2 needs several 100k of input data, we special case this.
 # Anything else works with 1024.
 my $UNCOMP_BUFSZ = 1024;
+
+sub _builtin_mime_handlers
+{
+
+  ## FIXME:
+  # running all these tests can take a lot of time.
+  # We could delay that into find_mime_handler() by using a sub here that 
+  # returns the array.
+
+  my @tar = ('/bin/tar');
+  ## osc co loves to create directories with : in them. 
+  ## Tell tar to accept such directories as directores.
+  push @tar, "--force-local" 
+    unless run([@tar, "--force-local", "--help"], { out_err => '/dev/null' });
+  push @tar, "--no-unquote"  
+    unless run([@tar, "--no-unquote", "--help"],  { out_err => '/dev/null'});
+
+  my @cpio_i = ('/usr/bin/cpio', '-idm');
+  $cpio_i[1] .= 'u' 
+    unless run(['/usr/bin/cpio', '-idmu', '--usage'], {out_err => '/dev/null'});
+  push @cpio_i, '--sparse'
+    unless run([@cpio_i, '--sparse', '--usage'], {out_err => '/dev/null'});
+  push @cpio_i, '--no-absolute-filenames'
+    unless run([@cpio_i, '--no-absolute-filenames', '--usage'], {out_err => '/dev/null'});
+
+ return (
+    # mimetype pattern          # suffix pattern      # command with redirects, as defined with IPC::Run::run
+    [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/lzcat)],        qw(< %(src)s > %(destfile)s) ],
+    [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/xz      -dc -f %(src)s)], qw(> %(destfile)s) ],
+    [ 'application=%bzip2',     qr{\.bz2$}i,          [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
+    [ 'application=%tar',       qr{\.tar(\._)?$}i,          [@tar, qw(-xf %(src)s)] ],
+    [ 'application=%tar+bzip2', qr{\.tar\.bz2(\._)?$}i,     [@tar, qw(-jxf %(src)s)] ],
+    [ 'application=%tar+gzip',  qr{\.t(ar\.gz|gz)(\._)?$}i, [@tar, qw(-zxf %(src)s)] ],
+    [ 'application=%rpm',       qr{\.(src\.rpm|spm|rpm)$}i, [qw(/usr/bin/rpm2cpio %(src)s | ), @cpio_i] ],
+ );
+
+# cannot use tar -C %(destdir)s,  we rely on being chdir'ed inside already :-)
+# E: /bin/tar: /tmp/xxx/_VASn/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_/_: Cannot chdir: Permission denied
+
+}
+
+
 
 
 =head1 SYNOPSIS
@@ -345,11 +366,11 @@ sub new
   $obj{exclude}{empty_dir} = 1  unless defined $obj{exclude}{empty_dir};
   $obj{exclude}{empty_file} = 1 unless defined $obj{exclude}{empty_file};
 
-  for my $h (@builtin_mime_handlers)
+  for my $h (_builtin_mime_handlers())
     {
       use_mime_handler(\%obj, @$h);
     }
-	
+
   return bless \%obj, $class;
 }
 
@@ -386,7 +407,7 @@ the same name already exists in the destination subdir, an additional subdir
 component is created to avoid any conflicts.
 For each extracted file, a record is written to the logfile.
 When unpacking is finished, the logfile contains one valid JSON structure.
-Unpack achives this by writing suitable prolog and epilog lines to the logfile.
+Unpack achieves this by writing suitable prolog and epilog lines to the logfile.
 
 The actual unpacking is dispatched to mime-type specfic mime handlers,
 selected using C<mime>. A mime-handler can either be built-in code, or an
@@ -632,6 +653,9 @@ It is used internally by C<unpack>, but is exported to be of use elsewhere.
 
 Init is run after construction of redirects. Calling chdir() in init thus has no
 effect on redirects with relative paths. 
+
+Return value in scalar context is the first nonzero result code, if any. In list context 
+all return values are returned.
 =cut
 
 sub run
@@ -697,7 +721,9 @@ sub run
 
   while ($h->pumpable)
     {
-      $h->pump;
+      # eval {} guards against 'process ended prematurely' errors.
+      # This happens on very fast commands, despite pumpable().
+      eval { $h->pump };
       if ($t && $t->is_expired)
         {
 	  $opt->{prog}->($h, $opt);
@@ -705,15 +731,23 @@ sub run
 	}
     }
   $h->finish;
-  return [$h->full_results];
+  return $h->full_results if wantarray;
+  return $h->result;
 }
 
-## not a method at all
-## Format a command command array used with run() as a shell command string.
-sub _fmt_run_shellcmd
+=head2 File::Unpack::fmt_run_shellcmd($m->{argvv})
+
+Static function to pretty print the return value $m of method find_mime_handler();
+It formats a command array used with run() as a properly escaped shell command string.
+
+=cut 
+
+sub fmt_run_shellcmd
 {
+  my @a = @_;
+  @a = @{$a[0]{argvv}} if ref $a[0] eq 'HASH';
   my @r = ();
-  push @r, ref() ? '('.shell_quote(@$_).')' : shell_quote($_) foreach @_;
+  push @r, ref() ? '('.shell_quote(@$_).')' : shell_quote($_) foreach @a;
   return join ' ', @r;
 }
 
@@ -765,7 +799,7 @@ sub _run_mime_handler
 	  push @cmd, _subst_args($a, $args);
 	}
     }
-  print "_run_mime_handler in $destdir: " . _fmt_run_shellcmd(@cmd) . "\n";
+  print "_run_mime_handler in $destdir: " . fmt_run_shellcmd(@cmd) . "\n";
 
   my $cwd = getcwd() or carp "cannot fetch initial working directory, getcwd: $!";
   chdir $jail or die "chdir '$jail'";
@@ -775,7 +809,7 @@ sub _run_mime_handler
   # init => sub { ... } is no longer needed. sigh, I really wanted to the init sub for the chdir.
   # But hey, mkpath() and rmtree() change the cwd so often, and restore it, so why shouldn't we?
 
-  my $r = $self->run(@cmd, 
+  my @r = $self->run(@cmd, 
     { 
       debug => ($self->{verbose} > 2) ? $self->{verbose} - 2 : 0, 
       watch => $src, every => 5, fu_obj => $self, mime_handler => $h, 
@@ -790,6 +824,11 @@ sub _run_mime_handler
   # be it a file or dir. This uses $jail_tmp, an unused pathname.
   my $jail_tmp = File::Temp::tempdir("_XXXX", DIR => $destdir);
   rmdir $jail_tmp;
+
+  # TODO: handle failure
+  # - remove all, 
+  # - retry with a fallback handler , if any.
+  print STDERR "Non-Zero return value: $r[0]\n" if $r[0];
 
   # if only one file in $jail, move it up, and return 
   # the filename instead of the dirname here.
@@ -1066,10 +1105,10 @@ sub find_mime_handler
 	      next;
 	    }
 	  $self->{mime_orcish}{$mimetype} = $h;
-	  return ($h, $r);
+	  return wantarray ? ($h, $r) : $h;
 	}
     }
-  return (undef, $r);
+  return wantarray ? (undef, $r) : undef;
 }
 
 =head2 minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
@@ -1196,7 +1235,8 @@ sub mime
       my $pos = tell $fd;
       ##bzip2 below needs a long buffer, or it returns 0.
       my $len = read $fd, $in{buf}, $UNCOMP_BUFSZ;
-      return [ 'x-system/x-error', undef, "read '$f' failed: $!" ] if $len < 0;
+      return [ 'x-system/x-error', undef, "read '$f' failed: $!" ] unless defined $len;
+      return [ 'x-system/x-error', undef, "read '$f' failed: $len: $!" ] if $len < 0;
       return [ 'application/x-empty', undef, 'empty' ] if $len == 0;
       seek $fd, $pos, 0;
 
@@ -1411,6 +1451,8 @@ Juergen Weigert, C<< <jw at suse.de> >>
 The implementation of C<mime> is an ugly hack. We suffer from the existance of
 multiple file magic databases, and multiple conflicting implementations. With
 perl we have at least 5 modules for this; here we use two.
+
+The builtin list of mime-handlers is incomplete. Please submit your handler code.
 
 Please report any bugs or feature requests to C<bug-file-unpack at rt.cpan.org>, or through
 the web interface at L<http://rt.cpan.org/NoAuth/ReportBug.html?Queue=File-Unpack>.  I will be notified, and then you'll
