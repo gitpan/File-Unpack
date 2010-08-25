@@ -1,0 +1,22 @@
+#! /bin/sh
+#
+# text=x-shellscript -- a mime handler for shell-scripts.
+# 2010-08-25, jnw@cpan.org
+#
+#   $1      $2          $3	     $4       $5        $6
+# %(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s
+
+# slurp in our config file:
+test -f "$6/config.sh" && . $6/config.sh
+
+# TODO: 
+# Try if $1 is a self extracting shell script. 
+# - a line matching /begin 600 filename.csv/
+# - gzip or bzip2 magic directly after a line break.
+# if nothing matches, assume that it is really just a shell script.
+# Maybe print a warning, if it is over 1MB in size :-)
+# -- hmm, this looks like it gets complicated. I guess I'll do it in perl again :-)
+
+# Do this to indicate to File::Unpack that there is nothing to unpack here:
+ln -s $1 $3
+exit 0

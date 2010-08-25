@@ -1,5 +1,13 @@
 Revision history for File-Unpack
 
+0.21	jw, Wed Aug 25 22:15:48 CEST 2010
+        Added 'nothing-to-do' semantic for mime-helpers: Point back by symlink.
+   	Added helper/text=x-shellscript to demonstrate this.
+	Made external mime-helpers work: registering, calling.
+	Remember absolut path, call mime_type() correctly.
+	Started to propagate errors from _run_mime_handler() to unpack().
+	mime(): In SLES11 we get 'text/plain charset=utf-8' without semicolon.
+
 0.20	jw, Tue Aug 24 21:15:49 CEST 2010
 	POD polishing. Synopsis now has some illustrative code.
 

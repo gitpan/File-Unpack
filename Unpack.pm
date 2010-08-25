@@ -50,11 +50,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.20
+Version 0.21
 
 =cut
 
-our $VERSION = '0.20';
+our $VERSION = '0.21';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -461,7 +461,16 @@ than configured with C<minfree>, a warning can be printed and unpacking is
 optionally paused. It also monitors the mime-handlers progress reading the archive 
 at source_path and reports percentages to STDERR (if verbose is 1 or more).
 
-After the mime-handler is finished, they system considers replacing the
+After the mime-handler is finished, C<unpack> examines the files it created.
+If it created no files in F<destdir>, an error is reported, and the
+F<source_path> may be passed to other unpackers, or finally be added to the log as is.
+
+If the mime-handler wants to express, that F<source_path> is already unpacked as far as possible
+and it should be added to the log without any errir messages, it should create a symbolic link 
+F<destdir> pointing to F<source_path>.
+
+
+The system considers replacing the
 directory with a file, under the following conditions:
 
 =over
@@ -482,21 +491,13 @@ The file must not already exist in the parent directory.
 
 =back
 
-A mime-handler trying to place files outside of the specified
-destination_path may receive 'permission denied' conditions. 
-# In this case, the handler 
-# can ask to be rerun with write permission to a certain number of parent
-# directories by printing one or multiple strings of the form "../../file" 
-# and exiting with a nonzero status. Unpack will respond by creating the
-# needed number of additional subdirectories, each named '_' (two in this
-# example: "./_/_" ), and will call the handler again with this extended
-# destination_path. 
 C<unpack> prepares 20 empty subdirectory levels and chdirs the unpacker 
 in there. This number can be adjusted using C<new(dot_dot_safeguard => 20)>.
 A directory 20 levels up from the current working dir has mode 0 while 
 the mime-handler runs. C<unpack> can optionally chmod(0) the parent of the subdirectory 
 after it chdirs the unpacker inside. Use C<new(jail_chmod0 => 1)> for this, default 
-is off.
+is off. If enabled, a mime-handler trying to place files outside of the specified
+destination_path may receive 'permission denied' conditions. 
 
 These are special hacks to keep badly constructed 
 tar balls, cpio, or zip archives at bay.
@@ -647,20 +648,57 @@ sub unpack
 	      my $unpacked = $self->_run_mime_handler($h, $archive, $destdir, 
 	      				$new_name, $m->[0], $m->[2], $self->{configdir});
 
-	      if ($archive =~ m{^\Q$self->{destdir}\E})
+	      if (ref $unpacked)
 	        {
-	          $self->{done}{$archive} = $unpacked;
-
-		  # to delete it, we should know if it was created during unpack.
-		  $data->{cmd} = $h->{fmt_p};
-		  $data->{unpacked} = $unpacked;
-	          $self->logf($archive => $data);
+		  $data->{failed} = $h->{fmt_p};
+		  $data->{error} = $unpacked->{error};
+		  $self->logf($archive => $data);
 		}
+	      elsif ($unpacked eq "$destdir/$new_name" and 
+	             readlink($unpacked)||'' eq $archive)
+	        {
+		  # a symlink backwards means, there is nothing to unpack here. take it as is.
+		  unlink $unpacked;
+		  $data->{passed} = $h->{name};
 
-	      my $newdestdir = $unpacked;
-	      $newdestdir =~ s{/+[^/]+}{} unless -d $newdestdir;	        # make sure it is a directory
-	      $newdestdir = $destdir unless $newdestdir =~ m{^\Q$self->{destdir}\E/};	# make sure it does not escape
-	      $self->unpack($unpacked, $newdestdir);
+		  if ($archive =~ m{^\Q$self->{destdir}\E})
+		    {
+		      # if inside, we just flag it done and log it.
+		      $self->{done}{$archive} = $archive;
+		      $self->logf($archive => $data);
+		    }
+		  else
+		    {
+		      # if outside, we copy it in, flag it done there, and log it here.
+		      if (File::Copy::copy($archive, $unpacked))
+		        {
+		          $self->{done}{$archive} = $unpacked;
+			  $self->logf($unpacked => $data);
+			}
+		      else
+		        {
+		          $data->{error} = "copy($archive, $unpacked): $!";
+			  $self->logf($archive => $data);
+			}
+		    }
+		}
+	      else
+		{
+		  if ($archive =~ m{^\Q$self->{destdir}\E})
+		    {
+		      $self->{done}{$archive} = $unpacked;
+
+		      # to delete it, we should know if it was created during unpack.
+		      $data->{cmd} = $h->{fmt_p};
+		      $data->{unpacked} = $unpacked;
+		      $self->logf($archive => $data);
+		    }
+
+		  my $newdestdir = $unpacked;
+		  $newdestdir =~ s{/+[^/]+}{} unless -d $newdestdir;	        # make sure it is a directory
+		  $newdestdir = $destdir unless $newdestdir =~ m{^\Q$self->{destdir}\E/};	# make sure it does not escape
+		  $self->unpack($unpacked, $newdestdir);
+		}
 	    }
 	}
     }
@@ -906,6 +944,13 @@ sub _run_mime_handler
       my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
       closedir DIR;
       print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found[0]\n" if $self->{verbose} > 1;
+      unless (@found)
+        {
+	  rmdir $jail_base;
+	  my $name = $1 if $args->{src} =~ m{/([^/]+)$};
+          print STDERR "oops(i=$i): nothing unpacked?? Adding $name as is.\n" if $self->{verbose};
+	  return { error => "nothing unpacked" };
+	}
       last if scalar @found != 1;
       $wanted_name = $found[0] if $i == $dot_dot_safeguard;
       last unless -d $jail_base . "/" . $found[0];
@@ -1039,9 +1084,9 @@ A wildcard before the '=' sign lowers precedence more than one after it.
 
 The mapping takes place when C<mime_handler_dir> is called, later additions are 
 not recognized. C<mime_handler> does not do any implicit expansions. Call it
-multiple times with the same command and different names if needed.
+multiple times with the same handler command and different names if needed.
 The default argument list is "%(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s" --
-this is applied, if no args are given and no redirections are given.
+this is applied, if no args are given and no redirections are given. See also C<unpack> for more semantics and how a handler should behave.
 
 Both methods return an ARRAY-ref of all currently known mime handlers.
 
@@ -1060,6 +1105,7 @@ sub mime_handler
   @args = ($name) unless @args;
   @args = ([@args]) unless ref $args[0];
 
+  # cut away the path prefix from name. And use / instead of = in the mime name.
   $name =~ s{(.*/)?(.*?)=(.*?)$}{$2/$3};
 
   push @{$args[0]}, @def_mime_handler_fmt unless $#{$args[0]} or defined $args[1];
@@ -1076,6 +1122,7 @@ sub mime_handler
     };
 
   delete $self->{mime_orcish};	# to be rebuilt in find_mime_handler()
+
   return $self->{mime_handler};
 }
 
@@ -1137,7 +1184,7 @@ sub mime_handler_dir
       # now push them, sorted by prio
       for my $h (sort { $h{$a}{p} <=> $h{$b}{p} } keys %h)
         {
-	  $self->mime_handler($h, undef, $h{$h}{a});
+	  $self->mime_handler(Cwd::fast_abs_path($h{$h}{a}));
 	}
     }
   return $self->{mime_handler};
@@ -1386,8 +1433,10 @@ sub mime
   my $mime1 = $flm->checktype_contents($in{buf});
   return [ 'x-system/x-error', undef, $mime1 ] if $mime1 =~ m{^cannot open};
 
-  my $enc; ($mime1, $enc) = ($1,$2) if $mime1 =~ m{^(.*?);\s*(.*)$};
-  $enc =~ s{^charset=}{};
+  # in SLES11 we get 'text/plain charset=utf-8' without semicolon.
+  my $enc; ($mime1, $enc) = ($1,$2) if $mime1 =~ m{^(.*?);\s*(.*)$} or
+                                       $mime1 =~ m{^(.*?)\s+(.*)$};
+  $enc =~ s{^charset=}{} if defined $enc;
   my @r = ($mime1, $enc, $flm->describe_contents($in{buf}) );
   my $mime2;
 

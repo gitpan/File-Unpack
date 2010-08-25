@@ -23,7 +23,10 @@ WriteMakefile(
 	'BSD::Resource' => 0,
 	'Filesys::Statvfs' => 0,
 
+	'Cwd'	=> 0,
+	'Carp'	=> 0,
 	'File::Path' => 0,
+	'File::Temp' => 0,
 	'File::Copy' => 0,
 	'JSON' => 0,
 	'String::ShellQuote' => 0,

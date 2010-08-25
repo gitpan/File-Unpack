@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               File-Unpack
-version:            0.20
+version:            0.21
 abstract:           An aggressive archive file unpacker, based on mime-types
 author:
     - Juergen Weigert <jnw@cpan.org>
@@ -12,13 +12,16 @@ build_requires:
     ExtUtils::MakeMaker:  0
 requires:
     BSD::Resource:        0
+    Carp:                 0
     Compress::Raw::Bzip2:  0
     Compress::Raw::Lzma:  0
     Compress::Raw::Zlib:  2.024
+    Cwd:                  0
     File::Copy:           0
     File::LibMagic:       0
     File::MimeInfo::Magic:  0
     File::Path:           0
+    File::Temp:           0
     Filesys::Statvfs:     0
     IPC::Run:             0
     JSON:                 0

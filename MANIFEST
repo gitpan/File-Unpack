@@ -1,14 +1,20 @@
 Changes
 MANIFEST
+MANIFEST.SKIP
 Makefile.PL
+ignore.txt
 README
 Unpack.pm
 file_unpack.pl
+children_fuser.pl
+
+helper/text=x-shellscript
 
 t/00-load.t
 t/manifest.t
 t/pod-coverage.t
 t/pod.t
+t/boilerplate.t
 t/01-init.t
 t/02-mime.t
 t/03-exclude.t
