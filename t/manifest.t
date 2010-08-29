@@ -8,6 +8,6 @@ use Test::More;
 #    plan( skip_all => "ok" );
 #}
 
-eval "use Test::CheckManifest 0.9";
-plan skip_all => "Test::CheckManifest 0.9 required" if $@;
-ok_manifest();
+eval "use Test::CheckManifest 0.9;";
+ok_manifest({filter => [ qr/\.svn/, qr/\.(sw.|orig|bak|old|tmp|tar\.bz2)$/]});
+done_testing();

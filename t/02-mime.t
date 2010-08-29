@@ -1,12 +1,13 @@
 #!perl -T
 
-use Test::More tests => 23;
+use Test::More;
 use FindBin;
 BEGIN { unshift @INC, "$1/../blib/lib" if $FindBin::Bin =~ m{(.*)} };
 use File::Unpack;
 
 diag("File::MimeInfo::Magic missing\n") unless $INC{'File/MimeInfo/Magic.pm'};
 diag("File::LibMagic missing\n") unless $INC{'File/LibMagic.pm'};
+my $shared_mime_info_db = '/usr/share/mime/magic';
 
 my $u = File::Unpack->new();
 
@@ -15,7 +16,7 @@ opendir DIR, $d or diag("where is my test data?");
 my @f = sort grep { !/^\./ } readdir DIR;
 closedir DIR;
 
-my %exp = 
+%exp = 
 (
   ## actually 'application/x-desktop' or 'text/x-desktop'
   'Desktop.directory' => [ 'text/plain', 'utf-8', 'UTF-8 Unicode text' ],
@@ -30,14 +31,22 @@ my %exp =
   ## actually a 'audio/x-mpegurl'
   'wzbc-2009-06-28-17-00.m3u' => ['text/plain','us-ascii','M3U playlist text'],
 );
+plan tests => (-f $shared_mime_info_db ? 2 * keys %exp : 0) + 5;
 
 
-for my $f (@f)
+if (-f $shared_mime_info_db)
   {
-    my $r = $u->mime("$d/$f");
-    diag("test file $f not in \%exp: ", Dumper $r),last unless $exp{$f};
-    cmp_ok($r->[0], 'eq', $exp{$f}[0]||'', "$f: $r->[0]");
-    cmp_ok($r->[1], 'eq', $exp{$f}[1]||'', "$f: \t\t\tcharset=$r->[1]");
+    for my $f (@f)
+      {
+	my $r = $u->mime("$d/$f");
+	diag("test file $f not in \%exp: ", Dumper $r),last unless $exp{$f};
+	cmp_ok($r->[0], 'eq', $exp{$f}[0]||'', "$f: $r->[0]");
+	cmp_ok($r->[1], 'eq', $exp{$f}[1]||'', "$f: \t\t\tcharset=$r->[1]");
+      }
+  }
+else
+  {
+    diag("shared mime info not tested: $shared_mime_info_db not found");
   }
 
 cmp_ok($u->mime( file => "$d/$f[0]" )->[0], 'eq', $exp{$f[0]}[0], "mime(file => ..)");

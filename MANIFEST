@@ -1,6 +1,5 @@
 Changes
 MANIFEST
-MANIFEST.SKIP
 Makefile.PL
 ignore.txt
 README
@@ -18,6 +17,7 @@ t/boilerplate.t
 t/01-init.t
 t/02-mime.t
 t/03-exclude.t
+t/04-subdir.t
 
 t/data/Desktop.directory
 t/data/IPA-snippet.pfa

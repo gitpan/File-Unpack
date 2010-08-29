@@ -15,8 +15,8 @@
 # TODO: 
 # evaluate File::Extract - Extract Text From Arbitrary File Types 
 #       (HTML, PDF, Plain, RTF, Excel)
-# call _run_mime_handler() with 'correct' destdir in cups-1.2.4/*/cups.jar
-#	harmless.
+#
+# make taint checks really check things, instead of $1 if m{^(.*)$};
 
 package File::Unpack;
 
@@ -50,11 +50,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.21
+Version 0.22
 
 =cut
 
-our $VERSION = '0.21';
+our $VERSION = '0.22';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -529,6 +529,8 @@ sub unpack
   my ($self, $archive, $destdir) = @_;
   $destdir = $self->{destdir} unless defined $destdir;
 
+  $destdir = $1 if $destdir =~ m{^(.*)$};	# brute force untaint
+
   if (($self->{recursion_level}||0) > 1000)
     {
       push @{$self->{error}}, "unpack('$archive','$destdir'): recursion limit 1000";
@@ -586,7 +588,8 @@ sub unpack
 	      my $new_in =  "$archive/$f";
 	      ## if $archive is $inside_destdir, then $archive is normally indentical to $destdir.
 	      ## ($inside_destdir means inside $self->{destdir}, actually)
-	      $self->unpack($new_in, $destdir) unless -l $new_in;
+	      my $new_destdir = $destdir; $new_destdir .= "/$f" if -d $new_in;
+	      $self->unpack($new_in, $new_destdir) unless -l $new_in;
 	    }
 	}
       else
@@ -613,14 +616,16 @@ sub unpack
 	      unless ($archive =~ m{^\Q$self->{destdir}\E})
 		{
 		  mkpath($destdir);
-		  if (-e "$destdir/$in_file")
+		  my $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}; # brute force untaint
+
+		  if (-e "$destdir_in_file")
 		    {
-		      print STDERR "unpack copy in: $destdir/$in_file already exists, " if $self->{verbose};
+		      print STDERR "unpack copy in: $destdir_in_file already exists, " if $self->{verbose};
 		      $destdir = File::Temp::tempdir("_XXXX", DIR => $destdir);
-		      print STDERR "using $destdir/$in_file instead.\n" if $self->{verbose};
+		      print STDERR "using $destdir_in_file instead.\n" if $self->{verbose};
 		    }
-		  $data->{error} = "copy($archive): $!" unless File::Copy::copy($archive, "$destdir/$in_file");
-	          $self->logf("$destdir/$in_file" => $data);
+		  $data->{error} = "copy($archive): $!" unless File::Copy::copy($archive, $destdir_in_file);
+	          $self->logf($destdir_in_file => $data);
 		}
 	      else
 	        {
@@ -907,6 +912,7 @@ sub _run_mime_handler
   print "_run_mime_handler in $destdir: " . fmt_run_shellcmd(@cmd) . "\n";
 
   my $cwd = getcwd() or carp "cannot fetch initial working directory, getcwd: $!";
+  $cwd = $1 if $cwd =~ m{^(.*)$};	#  brute force untaint. Whereever you go, there you are.
   chdir $jail or die "chdir '$jail'";
   chmod 0, $jail_base if $self->{jail_chmod0};
   # Now have fully initialzed in the parent before forking. 
@@ -943,7 +949,8 @@ sub _run_mime_handler
       opendir DIR, $jail_base or last;
       my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
       closedir DIR;
-      print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found[0]\n" if $self->{verbose} > 1;
+      my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$};	# brute force untaint
+      print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found0\n" if $self->{verbose} > 1;
       unless (@found)
         {
 	  rmdir $jail_base;
@@ -952,10 +959,10 @@ sub _run_mime_handler
 	  return { error => "nothing unpacked" };
 	}
       last if scalar @found != 1;
-      $wanted_name = $found[0] if $i == $dot_dot_safeguard;
-      last unless -d $jail_base . "/" . $found[0];
+      $wanted_name = $found0 if $i == $dot_dot_safeguard;
+      last unless -d $jail_base . "/" . $found0;
       rename $jail_base, $jail_tmp;
-      rename $jail_tmp . "/" . $found[0], $jail_base;
+      rename $jail_tmp . "/" . $found0, $jail_base;
       rmdir $jail_tmp or last;
     }
 
@@ -976,9 +983,11 @@ sub _run_mime_handler
 	  opendir DIR, $jail_base;
           my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
           closedir DIR;
-	  if ($#found == 0 and $found[0] eq $wanted_name)
+          my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$};	# brute force untaint
+
+	  if ($#found == 0 and $found0 eq $wanted_name)
 	    {
-              rename "$jail_base/$found[0]", $wanted_path;
+              rename "$jail_base/$found0", $wanted_path;
 	      rmdir $jail_base;
 	    }
 	  else
