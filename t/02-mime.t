@@ -4,6 +4,7 @@ use Test::More;
 use FindBin;
 BEGIN { unshift @INC, "$1/../blib/lib" if $FindBin::Bin =~ m{(.*)} };
 use File::Unpack;
+use Data::Dumper;
 
 diag("File::MimeInfo::Magic missing\n") unless $INC{'File/MimeInfo/Magic.pm'};
 diag("File::LibMagic missing\n") unless $INC{'File/LibMagic.pm'};
@@ -18,6 +19,8 @@ closedir DIR;
 
 %exp = 
 (
+  ## 0.22 used to say application/x-lzma, but true binary data. Not even compressed.
+  'lxknf09SCc0.bin' => [ 'application/octet-stream', 'binary' ], 
   ## actually 'application/x-desktop' or 'text/x-desktop'
   'Desktop.directory' => [ 'text/plain', 'utf-8', 'UTF-8 Unicode text' ],
   'xterm-snippet.desktop' => ['text/x-desktop','utf-8','UTF-8 Unicode Pascal program text',['text/x-pascal','application/x-desktop']],

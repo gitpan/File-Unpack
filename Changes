@@ -1,5 +1,29 @@
 Revision history for File-Unpack
 
+0.23	jw, Wed Sep  1 23:17:52 CEST 2010
+	Added option one_shot, to new() and file_unpack.pl
+	Added unpacking of: application/pdf, %tar+lzma, %rar, %uuencode
+	Added '# Requires: ....' comments with the builtin handlers to document 
+	the non-perlish dependencies. 
+	Fixed recognition of .xls -- File::LibMagic said corrupt, with only a short buffer.
+	Swapped 2nd and 3rd parameter of _run_mime_handler(): mime helpers have now their
+	suggested destname as second parameter.
+	mime(): added suffix rules for 'text/plain' and 'application/octet-stream', 
+	to harvest even the least trusted source of information, in the absence
+	of anything else.
+	Implemented first draft of helper/text/=x-shellscript: tested embedded gzip.
+	Added -L option to file_unpack.pl; 
+	_run_mime_handler() now untaints its argv. run() errors are now propagated.
+	t/04-subdir.t now does a real-life unzip test, if unzip is available.
+	Lowered $RECURSION_LIMIT to 200. 1000 takes ages with big files.
+	Call bunzip2 with -f, but don't call xz with -f.
+	Fixed unpack() to not hit 256 char limit per filename so easily.
+	Tested mime_handler_dir(), now it actually works. Introduced a default directory
+	/usr/share/File-Unpack/helper.
+	Preparing env variable PERL5LIB for helpers.
+	mime(): Fixed usage of LZMA alone decoder: count as positive, only of output appeared.
+	text/x-shellscript: uudecode and shar support tested; works now.
+
 0.22	jw, Sun Aug 29 23:27:59 CEST 2010
 	Fixed descending of destdir into subdirs of subdirs
 	Added t/04-subdir.t, 

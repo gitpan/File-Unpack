@@ -10,11 +10,18 @@ WriteMakefile(
     ($ExtUtils::MakeMaker::VERSION >= 6.3002
       ? ('LICENSE'=> 'perl')
       : ()),
+    BUILD_REQUIRES => {
+        'Test::More' => 0,
+	'Test::CheckManifest' => '0.9',
+	'FindBin' => 0,
+	'Test::Pod' => '1.22',
+	'Test::Pod::Coverage' => '1.08',
+	'Pod::Coverage' => '0.18',
+    },
     PL_FILES            => {},
     # Lzma, Bzip2, Zlib are not strictly required. 
     # we need them only for multi-level mimetype recognition.
     PREREQ_PM => {
-        'Test::More' => 0,
 	'File::LibMagic' => 0,
 	'File::MimeInfo::Magic' => 0,
 	'Compress::Raw::Lzma' => 0,
@@ -28,10 +35,14 @@ WriteMakefile(
 	'File::Path' => 0,
 	'File::Temp' => 0,
 	'File::Copy' => 0,
+	'File::Compare' => 0,
 	'JSON' => 0,
 	'String::ShellQuote' => 0,
 	'IPC::Run' => 0, 
 	'Text::Sprintf::Named' => 0,
+
+	'Getopt::Long' => 0,
+	'Pod::Usage' => 0,
     },
     dist                => { COMPRESS => 'bzip2 -9f', SUFFIX => 'bz2', },
     clean               => { FILES => 'File-Unpack-*' },

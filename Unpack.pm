@@ -11,17 +11,42 @@
 #  -> works, 
 # sudo zypper -v in --from 12 perl-Compress-Raw-Zlib
 #  -> works, if d.l.p is repo #12.
-#
+# 
 # TODO: 
-# evaluate File::Extract - Extract Text From Arbitrary File Types 
+# * evaluate File::Extract - Extract Text From Arbitrary File Types 
 #       (HTML, PDF, Plain, RTF, Excel)
 #
-# make taint checks really check things, instead of $1 if m{^(.*)$};
+# * make taint checks really check things, instead of $1 if m{^(.*)$};
+#
+# * Implement disk space monitoring.
+#
+# * formats:
+#   - use lzmadec/xzdec as fallback to lzcat.
+#   - glest has bzipped tar files named glest-1.0.10-data.tar.bz2.tar;
+#   - Not all suffixes are appended by . e.g. openh323-v1_15_2-src-tar.bz2 is different.
+#   - gzip -dc can unpack old compress .Z, add its mime-type
+#   - java-1_5_0-sun hides zip-files in shell scripts with suffix .bin
+#   - cpio fails on \.delta\.rpm
+#   - rpm files should extract all header info in readable format.
+#   - do we rely on rpm2cpio to handle them all: 
+#      rpm -qp --nodigest --nosignature --qf "%{PAYLOADCOMPRESSOR}" $f 
+#   - m{\.(otf|ttf|ps|eps)$}i)
+#   - application/x-frame		# xorg-modular/doc/xorg-docs/specs/XPRINT/xp_libraryTOC.doc
+#
+# * blacklisting?
+#      # th_en_US.dat is an 11MB thesaurus in OOo
+#      skip if $from =~ m{(/(ustar|pax)\-big\-\d+g\.tar\.bz2|/th_en_US\.dat|/testtar\.tar|\.html\.(ru|ja|ko\.euc-kr|fr|es|cz))$}
+#
+# * use LWP::Simple::getstore() if $archive =~ m{^\S+://}
+# * application/x-debian-package is a 'application/x-archive' -> (ar xv /dev/stdin) < $qufrom";
+# * application/x-iso9660	-> "isoinfo -d -i %(src)s"
+# * PDF improvement: okular says: 'this document contains embedded files.' How can we grab those?
 
 package File::Unpack;
 
 BEGIN
 {
+ # Requires: shared-mime-info
  eval 'use File::LibMagic;';		# only needed in mime(); mime() dies, if missing
  eval 'use File::MimeInfo::Magic;';	# only needed in mime(); okay, if missing.
  eval 'use Compress::Raw::Lzma;';	# only needed in mime(); for finding lzma.
@@ -37,6 +62,7 @@ use Carp;
 use File::Path;
 use File::Temp;			# tempdir() in _run_mime_handler.
 use File::Copy ();
+use File::Compare ();
 use JSON;
 use String::ShellQuote;		# used in _prep_configdir 
 use IPC::Run;			# implements File::Unpack::run()
@@ -50,35 +76,64 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.22
+Version 0.23
 
 =cut
 
-our $VERSION = '0.22';
+our $VERSION = '0.23';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
 delete $ENV{ENV};
 
 # Compress::Raw::Bunzip2 needs several 100k of input data, we special case this.
+# File::LibMagic wants to read ca. 70k of input data, before it says application/vnd.ms-excel
 # Anything else works with 1024.
 my $UNCOMP_BUFSZ = 1024;
 
+# unpack will give up, after unpacking that many levels. It is more likely we
+# got into a loop by then, than really have that many levels.
+my $RECURSION_LIMIT = 200;
+
+# Suggested place, where admins should install the helpers bundled with this module.
+sub _default_helper_dir { $ENV{FILE_UNPACK_HELPER_DIR}||'/usr/share/File-Unpack/helper' }
+
+# we use '=' in the mime_name, this expands to '/(x\-|ANY\+)?'
+
 my @builtin_mime_handlers = (
-  # mimetype pattern          # suffix pattern      # command with redirects, as defined with IPC::Run::run
-  [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/lzcat)],        qw(< %(src)s > %(destfile)s) ],
-  [ 'application=%lzma',      qr{\.(xz|lz(ma)?)$}i, [qw(/usr/bin/xz      -dc -f %(src)s)], qw(> %(destfile)s) ],
-  [ 'application=%bzip2',     qr{\.bz2$}i,          [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
-  [ 'application=%gzip',      qr{\.gz$}i,           [qw(/usr/bin/gzip -dc -f %(src)s)], qw(> %(destfile)s) ],
+  # mimetype pattern          # suffix_re           # command with redirects, as defined with IPC::Run::run
+
+  # Requires: xz bzip2 gzip unzip
+  [ 'application=xz',        qr{(?:xz|lz(ma)?)},   [qw(/usr/bin/lzcat)],  qw(< %(src)s       > %(destfile)s) ],
+  [ 'application=xz',        qr{(?:xz|lz(ma)?)},   [qw(/usr/bin/xz      -dc    %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=lzma',      qr{(?:xz|lz(ma)?)},   [qw(/usr/bin/lzcat)],  qw(< %(src)s       > %(destfile)s) ],
+  [ 'application=lzma',      qr{(?:xz|lz(ma)?)},   [qw(/usr/bin/xz      -dc    %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=bzip2',     qr{bz2},           [qw(/usr/bin/bunzip2 -dc -f %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=gzip',      qr{(?:gz|Z)},         [qw(/usr/bin/gzip -dc -f %(src)s)], qw(> %(destfile)s) ],
+  [ 'application=compress',  qr{(?:gz|Z)},         [qw(/usr/bin/gzip -dc -f %(src)s)], qw(> %(destfile)s) ],
+
+  # Requires: sharutils
+  [ 'text=uuencode',        qr{uu},                [qw(/usr/bin/uudecode -o %(destfile)s %(src)s)] ],
 
   # xml.summary.Mono.Security.Authenticode is twice inside of monodoc-1.0.4.tar.gz/Mono.zip/ -> use -o
-  [ 'application=zip',        qr{\.(zip|jar|sar)$}i,  [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
-  [ 'application=%zip',       qr{\.(zip|jar|sar)$}i,  [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
+  [ 'application=zip',        qr{(?:zip|jar|sar)}, [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
 
-  [ 'application=%tar',       qr{\.(tar|gem)$}i,      [\&_locate_tar,  qw(-xf %(src)s)] ],
-  [ 'application=%tar+bzip2', qr{\.tar\.bz2$}i,       [\&_locate_tar, qw(-jxf %(src)s)] ],
-  [ 'application=%tar+gzip',  qr{\.t(ar\.gz|gz)$}i,   [\&_locate_tar, qw(-zxf %(src)s)] ],
-  [ 'application=%rpm',       qr{\.(src\.r|s|r)pm$}i, [qw(/usr/bin/rpm2cpio %(src)s)], '|', [\&_locate_cpio_i] ],
+  # Requires: unrar
+  [ 'application=rar',	      qr{rar},             [qw(/usr/bin/unrar x -o- -p- -inul -kb -y %(src)s)] ],
+
+  # Requires: binutils
+  [ 'application=archive',    qr{(?:a|ar)},        [qw(/usr/bin/ar x %(src)s)] ],
+
+  # Requires: tar rpm cpio
+  [ 'application=tar',       qr{(?:tar|gem)},      [\&_locate_tar,  qw(-xf %(src)s)] ],
+  [ 'application=tar+bzip2', qr{tar\.bz2},         [\&_locate_tar, qw(-jxf %(src)s)] ],
+  [ 'application=tar+gzip',  qr{t(?:ar\.gz|gz)},   [\&_locate_tar, qw(-zxf %(src)s)] ],
+  [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/lzcat)], qw(< %(src)s |), [\&_locate_tar, qw(-xf -)] ],
+  [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/xz -dc -f %(src)s)], '|', [\&_locate_tar, qw(-xf -)] ],
+  [ 'application=rpm',       qr{(?:src\.r|s|r)pm}, [qw(/usr/bin/rpm2cpio %(src)s)], '|', [\&_locate_cpio_i] ],
+
+  # Requires: poppler-tools
+  [ 'application=pdf',	      qr{pdf}, [qw(/usr/bin/pdftotext %(src)s %(destfile)s.txt)], '&', [qw(/usr/bin/pdfimages -j %(src)s pdfimages)] ],
 );
 
 sub _locate_tar
@@ -121,7 +176,8 @@ sub _locate_cpio_i
 =head1 SYNOPSIS
 
 File::Unpack is an aggressive unpacker for archive files. We call it aggressive, 
-because it recursivly descends into any freshly unpacked file, if it appears to be an archive itself.
+because it can recursivly descend into any freshly unpacked file, if it appears to be an 
+archive itself.
 It also uncompresses files where needed. The ultimate goal of File::Unpack is
 to extract as much readable text (ascii or any other encoding) as possible.
 Most of the currently known archive file formats are supported.
@@ -161,12 +217,12 @@ well as exclude patterns.
 
 my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '100M', verbose => 1);
 
-Creates an unpacker instance. Destdir must be writable; all output files and directories 
-are placed inside destdir. Subdirectories will be created in an attempt to reflect the 
+Creates an unpacker instance. The parameter C<destdir> must be writable location; all output 
+files and directories are placed inside destdir. Subdirectories will be created in an attempt to reflect the 
 structure of the input. Destdir defaults to the current directory; relative paths 
 are resolved immediatly, so that chdir() after calling new is harmless.
 
-The parameter logfile can be a reference to a scalar, a filename, or a filedescriptor.
+The parameter C<logfile> can be a reference to a scalar, a filename, or a filedescriptor.
 The logfile starts with a JSON formatted prolog, where all lines start 
 with printable characters.
 For each file unpacked, a one line record is appended, started with a single 
@@ -175,10 +231,14 @@ Each record is formatted as a JSON " key: value\n" pair, where key is the filena
 The logfile is terminated by an epilog, where each line starts with a printable character.
 Per default, the logfile is sent to STDOUT. 
 
-The parameter maxfilesize is a safeguard against compressed sparse files. Such files could 
+The parameter C<maxfilesize> is a safeguard against compressed sparse files. Such files could 
 easily fill up any available disk space when unpacked. Files hitting this limit will 
 be silently truncated.  Check the logfile records or epilog to see if this has happened.
-BSD::Resource is used manipulate RLIMIT_FSIZE.
+BSD::Resource is used manipulate RLIMIT_FSIZE. To be implemented.
+
+The parameter C<one_shot> can optionally be set to non-zero, to limit unpacking to one level of unpacking.
+Unpacking of very well known compressed archives like e.g. tar.bz2 is considered one level only. The exact semantics 
+depend on the configured mime helpers.
 
 =head2 exclude
 
@@ -281,6 +341,7 @@ sub log
   if (my $fp = $self->{lfp})
     {
       print $fp @_;
+      $self->{lfp_printed}++;
     }
 }
 
@@ -295,7 +356,7 @@ sub logf
       my $str = $json->encode({$file => $hash});
       $str =~ s{^\{}{}s;
       $str =~ s{\}$}{}s;
-      die "logf failed to encode newline char: $str\n" if $str =~ m{(\n|\r)};
+      die "logf failed to encode newline char: $str\n" if $str =~ m{(?:\n|\r)};
       $self->log(" $str,\n");
     }
 }
@@ -366,9 +427,13 @@ sub new
 
   mkpath($obj{destdir}); # abs_path is unreliable if destdir does not exist
   $obj{destdir} = Cwd::fast_abs_path($obj{destdir});
+  $obj{destdir} =~ s{(.)/+$}{$1}; #  assert no trailing '/'.
+
   # used in unpack() to jail mime_handlers deep inside destdir:
   $obj{dot_dot_safeguard} = 20 unless defined $obj{dot_dot_safeguard};
   $obj{jail_chmod0} ||= 0;
+  # used in unpack, blocks recursion after archive unpacking
+  $obj{one_shot} ||= 0;
 
   carp "We are running as root: Malicious archives may clobber your filesystem.\n" unless $>;
 
@@ -380,6 +445,7 @@ sub new
     {
       $obj{lfp} = $obj{logfile};
     }
+  $obj{lfp_printed} = 0;
 
   if ($obj{maxfilesize})
     {
@@ -395,25 +461,46 @@ sub new
   $obj{exclude}{empty_dir} = 1  unless defined $obj{exclude}{empty_dir};
   $obj{exclude}{empty_file} = 1 unless defined $obj{exclude}{empty_file};
 
+  $self = bless \%obj, $class;
+
   for my $h (@builtin_mime_handlers)
     {
-      mime_handler(\%obj, @$h);
+      $self->mime_handler(@$h);
+    }
+  $obj{helper_dir} = _default_helper_dir unless exists $obj{helper_dir};
+  $self->mime_handler_dir($obj{helper_dir}) if defined $obj{helper_dir} and -d $obj{helper_dir};
+
+  unless ($ENV{PERL5LIB})
+    {
+      # in case we are using non-standard perl lib dirs, put them into the environment, 
+      # so that any helper scripts see them too. They might need them, if written in perl.
+
+      use Config;
+      my $pat = qr{^(?:\Q$Config{vendorlib}\E|\Q$Config{sitelib}\E|\Q$Config{privlib}\E)\b};
+      my @add;	# all dirs, that come before the standard dirs.
+      for my $i (@INC)
+        {
+	  last if $i =~ m{$pat};
+	  push @add, $i;
+	}
+      $ENV{PERL5LIB} = join ':', @add if @add;
     }
 
-  return bless \%obj, $class;
+  return $self;
 }
 
 sub DESTROY
 {
   my $self = shift;
-  if ($self->{lfp} and tell $self->{lfp})
+  if ($self->{lfp} and $self->{lfp_printed})
     {
       # this should never happen. 
       # always delete $self->{lfp} manually, when done.
       ## {{
-      $self->log(qq[\n}, "error":"unexpected destructor seen"};\n]);
+      $self->log(qq[\n}, "error":"unexpected destructor seen; lfp_printed=$self->{lfp_printed}; recursion_level=$self->{recursion_level}"};\n]);
       close $self->{lfp} if $self->{lfp} ne $self->{logfile};
       delete $self->{lfp};
+      delete $self->{lfp_printed};
     }
   if ($self->{configdir})
     {
@@ -443,17 +530,21 @@ Unpack achieves this by writing suitable prolog and epilog lines to the logfile.
 The actual unpacking is dispatched to mime-type specfic mime handlers,
 selected using C<mime>. A mime-handler can either be built-in code, or an
 external program (or shell-script) found in a directory registered with
-C<mime_handler_dir>.
+C<mime_handler_dir>. The standard place for external handlers is
+F</usr/share/File-Unpack/helper>; it can be changed by the environment variable
+F<FILE_UNPACK_HELPER_DIR> or the C<new> parameter C<helper_dir>.
 
 A mime-handler is called with 6 parameters:
-source_path, destdir, destfile, mimetype, description, and config_dir. 
+source_path, destfile, destination_path, mimetype, description, and config_dir. 
 Note, that destination_path is a freshly created empty working directory, even
-if the unpacker is expected to unpack only a single file. 
+if the unpacker is expected to unpack only a single file. The unpacker is
+called after chdir into destination_path, so you usually do not need to
+evaluate the third parameter.
 
-The config_dir contains unpack configuration in .sh, .js and possibly 
-other formats. A mime-handler should use this information, but need not.  
+The directory C<config_dir> contains unpack configuration in .sh, .js and possibly 
+other formats. A mime-handler may use this information, but need not.  
 All data passed into C<new> is reflected there, as well as the active exclude-list.
-Using the config information can be used by a mime-handler to skip unwanted
+Using the config information can help a mime-handler to skip unwanted
 work or otherwise optimize unpacking.
 
 C<unpack> monitors the available filesystem space in destdir. If there is less space
@@ -529,16 +620,22 @@ sub unpack
   my ($self, $archive, $destdir) = @_;
   $destdir = $self->{destdir} unless defined $destdir;
 
-  $destdir = $1 if $destdir =~ m{^(.*)$};	# brute force untaint
+  $destdir = $1 if $destdir =~ m{^(.*)$}s;	# brute force untaint
 
-  if (($self->{recursion_level}||0) > 1000)
+  unless (-e $archive)
     {
-      push @{$self->{error}}, "unpack('$archive','$destdir'): recursion limit 1000";
-      ## this is only an emergency stop.
-      return;
+      push @{$self->{error}}, "unpack('$archive'): no such file or directory";
+      return 1;
     }
 
-  if ($archive !~ m{^/} or $archive !~ m{^\Q$self-{destdir}\E/})
+  if (($self->{recursion_level}||0) > $RECURSION_LIMIT)
+    {
+      push @{$self->{error}}, "unpack('$archive','$destdir'): recursion limit $RECURSION_LIMIT";
+      ## this is only an emergency stop.
+      return 1;
+    }
+
+  if ($archive !~ m{^/} or $archive !~ m{^\Q$self->{destdir}\E/})
     {
       $archive = Cwd::fast_abs_path($archive) if -e $archive;
     }
@@ -613,15 +710,16 @@ sub unpack
 
           if ($m->[0] eq 'text/plain' or !$h)
 	    {
-	      unless ($archive =~ m{^\Q$self->{destdir}\E})
+	      unless ($archive =~ m{^\Q$self->{destdir}\E/})
 		{
 		  mkpath($destdir);
-		  my $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}; # brute force untaint
+		  my $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
 
 		  if (-e "$destdir_in_file")
 		    {
 		      print STDERR "unpack copy in: $destdir_in_file already exists, " if $self->{verbose};
 		      $destdir = File::Temp::tempdir("_XXXX", DIR => $destdir);
+		      $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
 		      print STDERR "using $destdir_in_file instead.\n" if $self->{verbose};
 		    }
 		  $data->{error} = "copy($archive): $!" unless File::Copy::copy($archive, $destdir_in_file);
@@ -639,8 +737,17 @@ sub unpack
 	      my $new_name = $in_file;
 	      
 	      # Either shorten the name from e.g. foo.txt.bz2 to foo.txt or append 
-	      # something: foo.pdf to foo.pdf._
-	      $new_name .= "._" unless $h->{suff_re} and $new_name =~ s{$h->{suff_re}(\._)?$}{};
+	      # something: foo.pdf to foo.pdf._;
+	      # Normally a suffix is appended by '.', but we also see '-' or '_' in real life.
+	      unless ($h->{suffix_re} and $new_name =~ s{[\._-]$h->{suffix_re}(?:\._\d*)?$}{}i)
+	        {
+		  # avoid unary notation of recursion couning. There may be a 256 char limit per 
+		  # directory entry. Start counting in decimal, if two or more.
+		  # Hmm, the /e modifier is not mentioned in perlre, but it works. Is it deprecated??
+	          $new_name .= "._";
+	          $new_name =~ s{\._\._$}{\._2};
+	          $new_name =~ s{\._(\d+)\._$}{ "._".($1+1) }e;
+		}
 
 	      ## if consumer of logf wants to do progress indication himself, 
 	      ## then tell him what we do before we start. (Our timer tick code may be analternative...)
@@ -650,8 +757,8 @@ sub unpack
 	      #     $self->logf($archive => { unpacking => $h->{fmt_p} });
 	      #   }
 	        
-	      my $unpacked = $self->_run_mime_handler($h, $archive, $destdir, 
-	      				$new_name, $m->[0], $m->[2], $self->{configdir});
+	      my $unpacked = $self->_run_mime_handler($h, $archive, $new_name, $destdir, 
+	      				$m->[0], $m->[2], $self->{configdir});
 
 	      if (ref $unpacked)
 	        {
@@ -702,7 +809,17 @@ sub unpack
 		  my $newdestdir = $unpacked;
 		  $newdestdir =~ s{/+[^/]+}{} unless -d $newdestdir;	        # make sure it is a directory
 		  $newdestdir = $destdir unless $newdestdir =~ m{^\Q$self->{destdir}\E/};	# make sure it does not escape
-		  $self->unpack($unpacked, $newdestdir);
+		  if ($self->{one_shot})
+		    {
+		      local $self->{mime_orcish};
+		      local $self->{mime_handler};
+
+		      $self->unpack($unpacked, $newdestdir);
+		    }
+		  else
+		    {
+		      $self->unpack($unpacked, $newdestdir);
+		    }
 		}
 	    }
 	}
@@ -721,10 +838,11 @@ sub unpack
           close $self->{lfp} or carp "logfile write ($self->{logfile}) failed: $!\n";
 	}
       delete $self->{lfp};
+      delete $self->{lfp_printed};
     }
 
   # FIXME: should return nonzero if we had any unrecoverable errors.
-  return 0;
+  return $self->{error} ? 1 : 0;
 }
 
 =head2 run
@@ -786,6 +904,7 @@ sub run
       if (ref $c)
         {
           push @run, $c;
+
           # put init early, so that it is run, before any IO redirects access relative paths.
           push @run, init => $opt->{init} if $opt->{init};
           next;		# don't look into argvs, but
@@ -793,7 +912,7 @@ sub run
       # look only into redirection operators
       $has_i_redir++ if $c =~ m{^0?<};
       $has_o_redir++ if $c =~ m{^1?>};
-      $has_e_redir++ if $c =~ m{^(2>|>&$)};
+      $has_e_redir++ if $c =~ m{^(?:2>|>&$)};
       if ($c eq '|')
         {
           push @run, '0<', $opt->{in} unless $has_i_redir;
@@ -801,7 +920,7 @@ sub run
           push @run, "2>", $opt->{err} unless $has_e_redir;
 	  $has_e_redir = $has_o_redir = 0;
 	}
-      push @run, $c;
+      push @run, $c;	# $1 if $c =~ m{^(.*)$}s;	# brute force untaint
     }
 
   push @run, '0<', $opt->{in}  unless $has_i_redir;
@@ -866,14 +985,19 @@ sub fmt_run_shellcmd
 # Two issues: 
 #   a) _run_mime_handler in /tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4
 #      should be /tmp/xxxx/cups-1.2.4-11.5.1.el5/cups-1.2.4/scripting/java
-#   b) _Knw_ should not appear ...
+#   b) _Knw_ should never appear in the end result ...
 #
 
 sub _run_mime_handler
 {
   my ($self, $h, @argv) = @_;
-  my $src     = $argv[0];
-  my $destdir = $argv[1];
+
+  for my $i (0..$#argv)
+    {
+      $argv[$i] = $1 if $argv[$i] =~ m{^(.*)$}s;	# brute force untaint
+    }
+
+  my $destdir = $argv[2];
   my $dot_dot_safeguard = $self->{dot_dot_safeguard}||0;
   $dot_dot_safeguard = 2 if $dot_dot_safeguard < 2;
 
@@ -885,12 +1009,13 @@ sub _run_mime_handler
   my $args = 
     {
       src	=> $argv[0],	# abs_path()
+      destfile	=> $argv[1],	# filename() - a suggested name, simply based on src, in case the unpacker needs it.
       destdir	=> $jail,	# abs_path() - for now...
-      destfile	=> $argv[2],	# filename() - a suggested name, simply based on src, in case the unpacker needs it.
       mime	=> $argv[3],
       descr	=> $argv[4],	# mime_descr
       configdir	=> $argv[5]	# abs_path()
     };
+  die "src must be an abs_path." unless $args->{src} =~ m{^/};
   
   my @cmd;
   for my $a (@{$h->{argvv}})
@@ -909,10 +1034,10 @@ sub _run_mime_handler
 	  push @cmd, _subst_args($a, $args);
 	}
     }
-  print "_run_mime_handler in $destdir: " . fmt_run_shellcmd(@cmd) . "\n";
+  print STDERR "_run_mime_handler in $destdir: " . fmt_run_shellcmd(@cmd) . "\n" if $self->{verbose} > 1;
 
   my $cwd = getcwd() or carp "cannot fetch initial working directory, getcwd: $!";
-  $cwd = $1 if $cwd =~ m{^(.*)$};	#  brute force untaint. Whereever you go, there you are.
+  $cwd = $1 if $cwd =~ m{^(.*)$}s;	#  brute force untaint. Whereever you go, there you are.
   chdir $jail or die "chdir '$jail'";
   chmod 0, $jail_base if $self->{jail_chmod0};
   # Now have fully initialzed in the parent before forking. 
@@ -920,25 +1045,29 @@ sub _run_mime_handler
   # init => sub { ... } is no longer needed. sigh, I really wanted to the init sub for the chdir.
   # But hey, mkpath() and rmtree() change the cwd so often, and restore it, so why shouldn't we?
 
+
   my @r = $self->run(@cmd, 
     { 
       debug => ($self->{verbose} > 2) ? $self->{verbose} - 2 : 0, 
-      watch => $src, every => 5, fu_obj => $self, mime_handler => $h, 
+      watch => $args->{src}, every => 5, fu_obj => $self, mime_handler => $h, 
       prog => sub { $_[1]{tick}++; print "T: tick_tick $_[1]{tick}\n"; },
     });
     
   chmod 0700, $jail_base if $self->{jail_chmod0};
   chdir $cwd or die "cannot chdir back to cwd: chdir($cwd): $!";
 
-  # loop through all _: if it only contains one item , replace it with this item,
-  # be it a file or dir. This uses $jail_tmp, an unused pathname.
-  my $jail_tmp = File::Temp::tempdir("_XXXX", DIR => $destdir);
-  rmdir $jail_tmp;
-
   # TODO: handle failure
   # - remove all, 
   # - retry with a fallback handler , if any.
   print STDERR "Non-Zero return value: $r[0]\n" if $r[0];
+
+  # FIXME: we should not die here
+  die "run() failed:\n " . fmt_run_shellcmd(@cmd) . "\n" . Dumper \@r if $r[1];
+
+  # loop through all _: if it only contains one item , replace it with this item,
+  # be it a file or dir. This uses $jail_tmp, an unused pathname.
+  my $jail_tmp = File::Temp::tempdir("_XXXX", DIR => $destdir);
+  rmdir $jail_tmp;
 
   # if only one file in $jail, move it up, and return 
   # the filename instead of the dirname here.
@@ -949,7 +1078,7 @@ sub _run_mime_handler
       opendir DIR, $jail_base or last;
       my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
       closedir DIR;
-      my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$};	# brute force untaint
+      my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
       print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found0\n" if $self->{verbose} > 1;
       unless (@found)
         {
@@ -966,7 +1095,9 @@ sub _run_mime_handler
       rmdir $jail_tmp or last;
     }
 
-  print STDERR "Hmmm, unpacker did not use destname: $args->{destfile}\n" if $self->{verbose} and !defined $wanted_name;
+  ## this message is broken.
+  # print STDERR "Hmmm, unpacker did not use destname: $args->{destfile}\n" if $self->{verbose} and !defined $wanted_name;
+
   print STDERR "Hmmm, unpacker saw destname: $args->{destfile}, but used destname: $wanted_name\n" 
     if defined($wanted_name) and $wanted_name ne $args->{destfile};
 
@@ -983,7 +1114,7 @@ sub _run_mime_handler
 	  opendir DIR, $jail_base;
           my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
           closedir DIR;
-          my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$};	# brute force untaint
+          my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
 
 	  if ($#found == 0 and $found0 eq $wanted_name)
 	    {
@@ -1000,6 +1131,28 @@ sub _run_mime_handler
           rename $jail_base, $wanted_path;
 	}
       $unpacked = $wanted_path;
+    }
+
+  # catch some patholigical cases.
+  if (-f $unpacked and !-l $unpacked)
+    {
+      if (!-s $unpacked)
+        {
+	  print STDERR "Ooops, only one empty file after unpacking???\n" if $self->{verbose};
+	  unlink $unpacked; symlink $args->{src}, $unpacked;
+	}
+      elsif (-s $unpacked eq (my $s = -s $args->{src}))
+	{
+	  print STDERR "Hmm, same size ($s bytes) after unpacking???\n" if $self->{verbose};
+	  ## xz -dc -f behaves like cat, if called on an unknown file.
+	  ## Compare the files. If they are identical, stop this:
+	  if (File::Compare::cmp($args->{src}, $unpacked) == 0)
+	    {
+	      print STDERR "Oops, identical after unpacking!\n" if $self->{verbose};
+	      unlink $unpacked; 
+	      symlink $args->{src}, $unpacked;
+	    }
+	}
     }
 
   return $unpacked;
@@ -1045,12 +1198,17 @@ sub _prep_configdir
 $u->mime_handler_dir($dir, ...)
 $u->mime_handler($mime_name, $suffix_regexp, \@argv, @redir, ...)
 
-Registers one or more directories where external mime-handler programs are found.
+Registers one or more directories where external mime-helper programs are found.
+The words helper and handler are used as synonyms here, helpers often refer to
+external programs, where handlers refer to builtin shell commands. 
 Multiple directories can be registered, They are searched in reverse order, i.e. 
 last added takes precedence. Any external mime-handler takes precedence over built-in code.
 An array ref to the new list of directories is returned.
 
-Helpers are mapped to mime-types by their name. The name can be constructed
+The suffix_regexp is not used to find helpers. It is applied to derive the destination name 
+from the source name.
+
+Helpers are mapped to mime-types by their mime_name. The name can be constructed
 from the mimetype by replacing the '/' with a '=' character, and by using the
 word 'ANY' as a wildcard component. The '=' character is interpreted as an
 implicit '=ANY+' if needed.
@@ -1094,13 +1252,13 @@ A wildcard before the '=' sign lowers precedence more than one after it.
 The mapping takes place when C<mime_handler_dir> is called, later additions are 
 not recognized. C<mime_handler> does not do any implicit expansions. Call it
 multiple times with the same handler command and different names if needed.
-The default argument list is "%(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s" --
+The default argument list is "%(src)s %(destfile)s %(destdir)s %(mime)s %(descr)s %(configdir)s" --
 this is applied, if no args are given and no redirections are given. See also C<unpack> for more semantics and how a handler should behave.
 
 Both methods return an ARRAY-ref of all currently known mime handlers.
 
 =cut 
-my @def_mime_handler_fmt = qw(%(src)s %(destdir)s %(destfile)s %(mime)s %(descr)s %(configdir)s);
+my @def_mime_handler_fmt = qw(%(src)s %(destfile)s %(destdir)s %(mime)s %(descr)s %(configdir)s);
 
 sub _subst_args
 {
@@ -1110,23 +1268,29 @@ sub _subst_args
 
 sub mime_handler
 {
-  my ($self, $name, $suff_re, @args) = @_;
+  my ($self, $name, $suffix_re, @args) = @_;
   @args = ($name) unless @args;
   @args = ([@args]) unless ref $args[0];
-
-  # cut away the path prefix from name. And use / instead of = in the mime name.
-  $name =~ s{(.*/)?(.*?)=(.*?)$}{$2/$3};
-
   push @{$args[0]}, @def_mime_handler_fmt unless $#{$args[0]} or defined $args[1];
 
+  # cut away the path prefix from name. And use / instead of = in the mime name.
+  $name =~ s{(.*/)?(.*?)=(.*?)$}{$2=$3};
+
+  unless ($name =~ m{[/=]})
+    {
+      print STDERR "mime_handler '$name' needs a '=' or '/'.\n" if $self->{verbose};
+      return $self->{mime_handler};
+    }
+
   my $pat = "^\Q$name\E\$";
+  $pat =~ s{\\=}{/(?:x-|ANY\\+)?};
   $pat =~ s{\\%}{ANY}g;
   $pat =~ s{^\^ANY}{};
   $pat =~ s{ANY\$$}{};
-  $pat =~ s{ANY}{\\b(\[\^\/\]\+)\\b}g;
+  $pat =~ s{ANY}{\\b\[\^\/\]+\\b}g;
   unshift @{$self->{mime_handler}}, 
     { 
-      name => $name, pat => $pat, suff_re => $suff_re, 
+      name => $name, pat => $pat, suffix_re => $suffix_re, 
       fmt_p => fmt_run_shellcmd(@args), argvv => \@args
     };
 
@@ -1144,7 +1308,7 @@ sub mime_handler_dir
       my %h;
       if (opendir DIR, $d)
         {
-	  %h = map { { a => "$d/$_" } } grep { -f "$d/$_" } readdir DIR;
+	  %h = map { $_ => { a => "$d/$_" } } grep { -f "$d/$_" } readdir DIR;
 	  closedir DIR;
 	}
       else
@@ -1158,17 +1322,19 @@ sub mime_handler_dir
 	  if ($h !~ m{[/=]})
 	    {
 	      my $h2 = $h . "=ANY";
-	      $h{$h2} = $h{$h} unless defined $h{$h2};
+	      $h{$h2} = { %{$h{$h}} } unless defined $h{$h2};
 	    }
 	}
 
-      # add expansion of = to =ANY+, if missing
-      for my $h (keys %h)
-        {
-	  next if $h =~ m{=ANY+};
-	  my $h2 = $h; $h2 =~ s{=}{=ANY+};
-	  $h{$h2} = $h{$h} unless defined $h{$h2};
-	}
+# not needed, this is implicit in mime_handler()/$pat
+#
+#      # add expansion of = to =ANY+, if missing
+#      for my $h (keys %h)
+#        {
+#	  next if $h =~ m{=ANY+};
+#	  my $h2 = $h; $h2 =~ s{=}{=ANY+};
+#	  $h{$h2} = $h{$h} unless defined $h{$h2};
+#	}
 
       # calculate priorities
       for my $h (keys %h)
@@ -1190,10 +1356,12 @@ sub mime_handler_dir
 	  $h{$h}{p} = $p - length($h);
 	}
 
-      # now push them, sorted by prio
-      for my $h (sort { $h{$a}{p} <=> $h{$b}{p} } keys %h)
+      # Now push them, sorted by prio.
+      # Smaller prio_number is better. Later addition is prefered.
+      for my $h (sort { $h{$b}{p} <=> $h{$a}{p} } keys %h)
         {
-	  $self->mime_handler(Cwd::fast_abs_path($h{$h}{a}));
+	  # do not ruin the original name by resolving symlinks and such.
+	  $self->mime_handler($h, undef, [Cwd::fast_abs_path($h{$h}{a})]);
 	}
     }
   return $self->{mime_handler};
@@ -1302,6 +1470,8 @@ sub _finalize_argvv
 
 $u->minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
 
+THE ACTUAL TESTS ARE NOT IMPLEMENTED.
+
 Guard the filesystem (destdir) against becoming full during C<unpack>. 
 Before unpacking each source archive, the free space is measured and compared against three conditions:
 
@@ -1341,6 +1511,8 @@ sub _bytes_unit
   return $1*1024*1024*1024*1024 if $text =~ m{([\d\.]+)t}i;
   return $text;
 }
+
+# see fs.pm/check_fs_health()
 
 sub minfree
 {
@@ -1390,6 +1562,14 @@ does, making a very simple and efficient mime-handler).
 C<mime> returns a 3 or 4 element arrayref with mimetype, charset, description, diff;
 where diff is only present when both methods disagree.
 
+In case of 'text/plain', an additional rule based on file name suffix is used to allow
+recognizing well known plain text pack formats. 
+We return 'text/x-suffix-XX+plain', where XX is one of the recognized suffixes
+(in all lower case and without the dot).  E.g. a plain mmencoded file has no
+header and looks like 'plain/text' to all the known magic libraries. We
+recognize the suffixes .mm, .b64, and .base64 for this (case insignificant).
+A similar rule exitst for 'application/octect-stream'. It may trigger if lzma recognition fails.
+
 Examples:
  
  [ 'text/x-perl', 'us-ascii', 'a /usr/bin/perl -w script text']
@@ -1433,13 +1613,22 @@ sub mime
 
       close $fd unless $in{fd};
     }
-  $in{file} = '-' unless defined $in{file};
 
-
-  open my $fd, '<', \$in{buf};	# for use with File::MimeInfo::Magic
 
   ## flm can say 'cannot open \'IP\' (No such file or directory)'
+  ## flm can say 'CDF V2 Document, corrupt: Can\'t read SAT'	(application/vnd.ms-excel)
   my $mime1 = $flm->checktype_contents($in{buf});
+  if ($mime1 =~ m{, corrupt: })
+    {
+      print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 1;
+      if (defined $in{file})
+        {
+          print STDERR "mime: reopening $in{file}\n" if $self->{verbose} > 1;
+          $mime1 = $flm->checktype_filename($in{file});
+	}
+    }
+  $in{file} = '-' unless defined $in{file};
+    
   return [ 'x-system/x-error', undef, $mime1 ] if $mime1 =~ m{^cannot open};
 
   # in SLES11 we get 'text/plain charset=utf-8' without semicolon.
@@ -1449,7 +1638,7 @@ sub mime
   my @r = ($mime1, $enc, $flm->describe_contents($in{buf}) );
   my $mime2;
 
-  if ($mime1 =~ m{^text/x-(pascal|fortran)$})
+  if ($mime1 =~ m{^text/x-(?:pascal|fortran)$})
     {
       # xterm.desktop
       # ['text/x-pascal; charset=utf-8','UTF-8 Unicode Pascal program text']
@@ -1467,7 +1656,7 @@ sub mime
 	  $r[0] = "text/$1" if $mime2 =~ m{/(\S+)};
 	}
     }
-  elsif ($mime1 eq 'text/plain' and $r[2] =~ m{(PostScript|font)}i)
+  elsif ($mime1 eq 'text/plain' and $r[2] =~ m{(?:PostScript|font)}i)
     {
       # IPA.pfa
       # ['text/plain; charset=us-ascii','PostScript Type 1 font text (OmegaSerifIPA 001.000)']
@@ -1487,6 +1676,8 @@ sub mime
     {
       # hmm, are we sure? No, if the description contradicts:
       # 
+      $r[0] = "text/x-uuencode" if $r[2] eq 'uuencoded or xxencoded text';
+
       # bin/floor
       # ['text/x-pascal; charset=us-ascii','a /usr/bin/tclsh script text']
       # 'text/plain'
@@ -1544,18 +1735,21 @@ sub mime
 	  if ($lz)
 	    {
 	      $stat = $lz->code($in{buf}, $uncomp_buf);
-	      if ($stat == LZMA_OK or $stat == LZMA_STREAM_END)
+	      if (($stat == LZMA_OK or $stat == LZMA_STREAM_END) 
+	      	  and 
+	          (length($uncomp_buf) > length($saved_input)))
 	        {
 		  $r[0] = "application/x-lzma";
 		  $r[2] = "LZMA compressed data, no magic";
 		}
+	      # This decompressor consumes the input.
 	      $in{buf} = $saved_input;
 	    }
 	}
     }
   # printf STDERR "in-buf = %d bytes\n", length($in{buf});
 
-  if ($r[0] =~ m{^application/(x-)?gzip$})
+  if ($r[0] =~ m{^application/(?:x-)?gzip$})
     {
       my ($gz, $stat) = eval { new Compress::Raw::Zlib::Inflate( -WindowBits => WANT_GZIP() ); };
       if ($gz)
@@ -1565,9 +1759,11 @@ sub mime
 	}
     }
 
-  ## bzip2 is nice for stacked mime checking. It needs a huge input buffer that we do not normally provide.
-  ## We only support it at the top of a stack, where we acquire enough additional input until bzip2 is happy.
-  if ($r[0] =~ m{^application/(x-)?bzip2$} && !$in{recursion})
+  ## bzip2 is not nice for stacked mime checking. 
+  ## It needs a huge input buffer that we do not normally provide.
+  ## We only support it at the top of a stack, where we acquire enough additional 
+  ## input until bzip2 is happy.
+  if ($r[0] =~ m{^application/(?:x-)?bzip2$} && !$in{recursion})
     {
       my $limitOutput = 1;
       my ($bz, $stat) = eval { new Compress::Raw::Bunzip2 0, 0, 0, 0, $limitOutput; };
@@ -1628,6 +1824,18 @@ sub mime
 	}
     }
   $r[0] .= '+zip' if $r[0] =~ m{^application/vnd\.oasis\.opendocument\.text$};
+
+  if ($r[0] eq 'text/plain' and $in{file} =~ m{\.(mm|b64|base64)$}i)
+    {
+      my $suf = lc $1;
+      $r[0] = "text/x-suffix-$suf+plain";
+    }
+
+  if ($r[0] eq 'application/octet-stream' and $in{file} =~ m{\.(lzma|zx|lz)$}i)
+    {
+      my $suf = lc $1;
+      $r[0] = "application/x-suffix-$suf+octet-stream";
+    }
 
   ${$in{uncomp}} = $uncomp_buf if ref $in{uncomp} eq 'SCALAR';
   $r[3] = [ $mime1, $mime2 ] if $mime1 ne $r[0] or ($mime2 and $mime2 ne $mime1);
