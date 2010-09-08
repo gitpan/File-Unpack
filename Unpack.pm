@@ -76,11 +76,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.23
+Version 0.25
 
 =cut
 
-our $VERSION = '0.23';
+our $VERSION = '0.25';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -122,7 +122,14 @@ my @builtin_mime_handlers = (
   [ 'application=rar',	      qr{rar},             [qw(/usr/bin/unrar x -o- -p- -inul -kb -y %(src)s)] ],
 
   # Requires: binutils
-  [ 'application=archive',    qr{(?:a|ar)},        [qw(/usr/bin/ar x %(src)s)] ],
+  [ 'application=archive',    qr{(?:a|ar|deb)},    [qw(/usr/bin/ar x %(src)s)] ],
+  [ 'application=x-deb',      qr{(?:a|ar|deb)},    [qw(/usr/bin/ar x %(src)s)] ],
+
+  # Requires: cabextract
+  [ 'application/vnd.ms-cab-compressed', qr{cab},  [qw(/usr/bin/cabextract -q %(src)s)] ],
+
+  # Requires: p7zip
+  [ 'application/x-7z-compressed', qr{7z},	   [qw(/usr/bin/7z x -pPass -y  %(src)s)] ],
 
   # Requires: tar rpm cpio
   [ 'application=tar',       qr{(?:tar|gem)},      [\&_locate_tar,  qw(-xf %(src)s)] ],
@@ -131,6 +138,7 @@ my @builtin_mime_handlers = (
   [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/lzcat)], qw(< %(src)s |), [\&_locate_tar, qw(-xf -)] ],
   [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/xz -dc -f %(src)s)], '|', [\&_locate_tar, qw(-xf -)] ],
   [ 'application=rpm',       qr{(?:src\.r|s|r)pm}, [qw(/usr/bin/rpm2cpio %(src)s)], '|', [\&_locate_cpio_i] ],
+  [ 'application=cpio',      qr{cpio},             [\&_locate_cpio_i], qw(< %(src)s) ],
 
   # Requires: poppler-tools
   [ 'application=pdf',	      qr{pdf}, [qw(/usr/bin/pdftotext %(src)s %(destfile)s.txt)], '&', [qw(/usr/bin/pdfimages -j %(src)s pdfimages)] ],
@@ -168,6 +176,8 @@ sub _locate_cpio_i
     unless run([@cpio_i, '--sparse', '--usage'], {out_err => '/dev/null'});
   push @cpio_i, '--no-absolute-filenames'
     unless run([@cpio_i, '--no-absolute-filenames', '--usage'], {out_err => '/dev/null'});
+  push @cpio_i, '--force-local'
+    unless run([@cpio_i, '--force-local', '--usage'], {out_err => '/dev/null'});
 
   @{$self->{_locate_cpio_i}} = \@cpio_i;
   return @cpio_i;
@@ -1549,7 +1559,7 @@ File::MimeInfo::Magic, if available.  Either one is sufficient, but having both
 is better. LibMagic sometimes says 'text/x-pascal', although we have a F<.desktop>
 file, or returns says 'text/plain', but has contradicting details in its description.
 
-C<File::MimeInfo::Magic::magic> is consulted where the libmagic output is dubious.
+C<File::MimeInfo::Magic::magic> is consulted where the libmagic output is dubious. E.g. when the desciption says something interesting like 'Debian binary package (format 2.0)' but the mimetype says 'application/octet-stream'.
 
 This implementation also features multi-level mime-type recognition for efficient unpacking.
 If we'd recognize a large bzipped tar ball only as bzip, we'd unpack a huge
@@ -1731,7 +1741,7 @@ sub mime
 	  no strict 'subs';	# Compress::Raw::Lzma::AloneDecoder, LZMA_OK, LZMA_STREAM_END
 
 	  my $saved_input = $in{buf};
-          my ($lz, $stat) = eval { new Compress::Raw::Lzma::AloneDecoder -Bufsize => $UNCOMP_BUFSZ, -LimitOutput => 1; };
+          my ($lz, $stat) = eval { Compress::Raw::Lzma::AloneDecoder->new(-Bufsize => $UNCOMP_BUFSZ, -LimitOutput => 1); };
 	  if ($lz)
 	    {
 	      $stat = $lz->code($in{buf}, $uncomp_buf);

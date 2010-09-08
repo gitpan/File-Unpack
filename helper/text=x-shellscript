@@ -57,8 +57,7 @@ BEGIN
   eval "use File::Unpack;";
   eval "use File::LibMagic;";
 }
-use Data::Dumper;
-die Dumper $ENV{PERL5LIB}, \@INC;
+#use Data::Dumper;
 
 my $fu = eval "File::Unpack->new(logfile => '/dev/null', verbose => 0);";
 my $flm = File::LibMagic->new() unless defined $fu;

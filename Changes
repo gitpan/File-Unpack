@@ -1,5 +1,10 @@
 Revision history for File-Unpack
 
+0.25	jw, Wed Sep  8 21:44:37 CEST 2010
+	Added .cpio, .deb, .cab, .7z
+	Removed stupid debug die in helper.
+	Removed done_testing() for the sake of old Test::More on 11.1
+
 0.23	jw, Wed Sep  1 23:17:52 CEST 2010
 	Added option one_shot, to new() and file_unpack.pl
 	Added unpacking of: application/pdf, %tar+lzma, %rar, %uuencode
