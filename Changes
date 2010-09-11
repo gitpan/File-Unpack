@@ -1,5 +1,9 @@
 Revision history for File-Unpack
 
+0.26	jw, Thu Sep  9 19:26:21 CEST 2010
+	Added .upx; we are testing all application/*-executable for upx to get the mime type.
+	Fixed test results on SLE-11, 02-mime.t now can match regexp too.
+
 0.25	jw, Wed Sep  8 21:44:37 CEST 2010
 	Added .cpio, .deb, .cab, .7z
 	Removed stupid debug die in helper.
