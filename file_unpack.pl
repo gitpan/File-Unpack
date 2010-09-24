@@ -29,6 +29,8 @@ my @mime_handler_dirs;
 
 my %opt = ( verbose => 1, maxfilesize => '100M', one_shot => 0);
 
+push @mime_handler_dirs, "$FindBin::RealBin/helper" if -d "$FindBin::RealBin/helper";
+
 GetOptions(
 	"verbose|v+"   => \$opt{verbose},
 	"version|V"    => sub { print "$version\n"; exit },

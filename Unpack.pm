@@ -76,11 +76,11 @@ File::Unpack - An aggressive archive file unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.26
+Version 0.27
 
 =cut
 
-our $VERSION = '0.26';
+our $VERSION = '0.27';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -123,6 +123,8 @@ my @builtin_mime_handlers = (
 
   # Requires: unrar
   [ 'application=rar',	      qr{rar},             [qw(/usr/bin/unrar x -o- -p- -inul -kb -y %(src)s)] ],
+  # Requires: lha
+  [ 'application=x-lha',      qr{lha},             [qw(/usr/bin/lha x -q %(src)s)] ],
 
   # Requires: binutils
   [ 'application=archive',    qr{(?:a|ar|deb)},    [qw(/usr/bin/ar x %(src)s)] ],
@@ -221,8 +223,8 @@ Most of the currently known archive file formats are supported.
 Examines the contents of an archive file or directory by extensive mime-type
 analysis. The contents is unpacked recursively to the given destination
 directory; a listing of the unpacked files is reported through the built in
-logging facility during unpacking. The mime-type handlers are customizable, as
-well as exclude patterns.
+logging facility during unpacking. Most common archive file formats are handled 
+directly; more can easily be added as mime-type helper plugins.
 
 =head1 SUBROUTINES/METHODS
 
@@ -1631,15 +1633,18 @@ sub mime
   ## flm can say 'cannot open \'IP\' (No such file or directory)'
   ## flm can say 'CDF V2 Document, corrupt: Can\'t read SAT'	(application/vnd.ms-excel)
   my $mime1 = $flm->checktype_contents($in{buf});
-  if ($mime1 =~ m{, corrupt: })
+  if ($mime1 =~ m{, corrupt: } or $mime1 =~ m{^application/octet-stream\b})
     {
-      print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 1;
+      # application/x-iso9660-image is reported as application/octet-stream if the buffer is short.
+      # iso images usually start with 0x8000 bytes of all '\0'.
+      print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 2;
       if (defined $in{file})
         {
           print STDERR "mime: reopening $in{file}\n" if $self->{verbose} > 1;
           $mime1 = $flm->checktype_filename($in{file});
 	}
     }
+  print STDERR "flm->checktype_contents: $mime1\n" if $self->{verbose} > 1;
   $in{file} = '-' unless defined $in{file};
     
   return [ 'x-system/x-error', undef, $mime1 ] if $mime1 =~ m{^cannot open};
@@ -1789,7 +1794,7 @@ sub mime
       if ($bz)
         {
 	  ## this only works if this is a first level call.
-	  open IN, "<", $in{file};
+	  open IN, "<", $in{file} unless $in{file} eq '-';
 	  seek IN, length($in{buf}), 0;
 	  while (!length $uncomp_buf)
 	    {

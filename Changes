@@ -1,8 +1,16 @@
 Revision history for File-Unpack
 
+0.27	jw, Sat Sep 11 22:01:49 CEST 2010
+	new feature in mime(): attempt full file access
+	not only if flm reports currupt, but also when it reports
+	a/octet-stream. this helps to recognize a/x-iso9660-image
+	Added .iso by including my old unpack_iso.pl as a helper.
+	Added .lha
+
 0.26	jw, Thu Sep  9 19:26:21 CEST 2010
-	Added .upx; we are testing all application/*-executable for upx to get the mime type.
-	Fixed test results on SLE-11, 02-mime.t now can match regexp too.
+	Added .upx; we are testing all application/*-executable for upx to get
+	the mime type.  Fixed test results on SLE-11, 02-mime.t now can match
+	regexp too.
 
 0.25	jw, Wed Sep  8 21:44:37 CEST 2010
 	Added .cpio, .deb, .cab, .7z
@@ -14,9 +22,9 @@ Revision history for File-Unpack
 	Added unpacking of: application/pdf, %tar+lzma, %rar, %uuencode
 	Added '# Requires: ....' comments with the builtin handlers to document 
 	the non-perlish dependencies. 
-	Fixed recognition of .xls -- File::LibMagic said corrupt, with only a short buffer.
-	Swapped 2nd and 3rd parameter of _run_mime_handler(): mime helpers have now their
-	suggested destname as second parameter.
+	Fixed recognition of .xls -- File::LibMagic said corrupt, with only a
+	short buffer.  Swapped 2nd and 3rd parameter of _run_mime_handler():
+	mime helpers have now their suggested destname as second parameter.
 	mime(): added suffix rules for 'text/plain' and 'application/octet-stream', 
 	to harvest even the least trusted source of information, in the absence
 	of anything else.
