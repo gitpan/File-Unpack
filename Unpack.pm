@@ -72,15 +72,15 @@ use Data::Dumper;
 
 =head1 NAME
 
-File::Unpack - An aggressive archive file unpacker, based on mime-types
+File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... archive unpacker, based on mime-types
 
 =head1 VERSION
 
-Version 0.25
+Version 0.27
 
 =cut
 
-our $VERSION = '0.25';
+our $VERSION = '0.28';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -115,11 +115,16 @@ my @builtin_mime_handlers = (
   # Requires: sharutils
   [ 'text=uuencode',        qr{uu},                [qw(/usr/bin/uudecode -o %(destfile)s %(src)s)] ],
 
+  # Requires: upx
+  [ 'application=upx',	   qr{(?:upx\.exe|upx)},   [qw(/usr/bin/upx -q -q -q -d -o%(destfile)s %(src)s) ] ],
+
   # xml.summary.Mono.Security.Authenticode is twice inside of monodoc-1.0.4.tar.gz/Mono.zip/ -> use -o
   [ 'application=zip',        qr{(?:zip|jar|sar)}, [qw(/usr/bin/unzip -P no_pw -q -o %(src)s)] ],
 
   # Requires: unrar
   [ 'application=rar',	      qr{rar},             [qw(/usr/bin/unrar x -o- -p- -inul -kb -y %(src)s)] ],
+  # Requires: lha
+  [ 'application=x-lha',      qr{lha},             [qw(/usr/bin/lha x -q %(src)s)] ],
 
   # Requires: binutils
   [ 'application=archive',    qr{(?:a|ar|deb)},    [qw(/usr/bin/ar x %(src)s)] ],
@@ -218,8 +223,8 @@ Most of the currently known archive file formats are supported.
 Examines the contents of an archive file or directory by extensive mime-type
 analysis. The contents is unpacked recursively to the given destination
 directory; a listing of the unpacked files is reported through the built in
-logging facility during unpacking. The mime-type handlers are customizable, as
-well as exclude patterns.
+logging facility during unpacking. Most common archive file formats are handled 
+directly; more can easily be added as mime-type helper plugins.
 
 =head1 SUBROUTINES/METHODS
 
@@ -704,7 +709,7 @@ sub unpack
 	  push @{$self->{error}}, "unpack dir ($archive) failed: $!";
 	}
     }
-  else
+  elsif (-f $archive)
     {
       if ($self->_not_excluded($subdir, $in_file) and
           !defined($self->{done}{$archive}))
@@ -833,6 +838,10 @@ sub unpack
 		}
 	    }
 	}
+    }
+  else
+    {
+      $self->logf($archive => { "skipped" => "special file"});
     }
 
   if (--$self->{recursion_level} == 0)
@@ -1628,15 +1637,18 @@ sub mime
   ## flm can say 'cannot open \'IP\' (No such file or directory)'
   ## flm can say 'CDF V2 Document, corrupt: Can\'t read SAT'	(application/vnd.ms-excel)
   my $mime1 = $flm->checktype_contents($in{buf});
-  if ($mime1 =~ m{, corrupt: })
+  if ($mime1 =~ m{, corrupt: } or $mime1 =~ m{^application/octet-stream\b})
     {
-      print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 1;
+      # application/x-iso9660-image is reported as application/octet-stream if the buffer is short.
+      # iso images usually start with 0x8000 bytes of all '\0'.
+      print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 2;
       if (defined $in{file})
         {
           print STDERR "mime: reopening $in{file}\n" if $self->{verbose} > 1;
           $mime1 = $flm->checktype_filename($in{file});
 	}
     }
+  print STDERR "flm->checktype_contents: $mime1\n" if $self->{verbose} > 1;
   $in{file} = '-' unless defined $in{file};
     
   return [ 'x-system/x-error', undef, $mime1 ] if $mime1 =~ m{^cannot open};
@@ -1666,10 +1678,16 @@ sub mime
 	  $r[0] = "text/$1" if $mime2 =~ m{/(\S+)};
 	}
     }
-  elsif ($mime1 eq 'text/plain' and $r[2] =~ m{(?:PostScript|font)}i)
+  elsif (($mime1 eq 'text/plain' and $r[2] =~ m{(?:PostScript|font)}i)
+	or ($mime1 eq 'application/postscript'))
     {
-      # IPA.pfa
-      # ['text/plain; charset=us-ascii','PostScript Type 1 font text (OmegaSerifIPA 001.000)']
+      # 11.3 says:
+      #  IPA.pfa
+      #  ['text/plain; charset=us-ascii','PostScript Type 1 font text (OmegaSerifIPA 001.000)']
+      # sles11 says:
+      #  IPA.pfa
+      #  ['application/postscript', undef, 'PostScript document text']
+      #
       # mime2 = 'application/x-font-type1'
       # $mime2 = eval { File::MimeInfo::Magic::mimetype($in{file}); };
       $mime2 ||= eval { open my $fd,'<',\$in{buf}; File::MimeInfo::Magic::magic($fd); };
@@ -1780,7 +1798,7 @@ sub mime
       if ($bz)
         {
 	  ## this only works if this is a first level call.
-	  open IN, "<", $in{file};
+	  open IN, "<", $in{file} unless $in{file} eq '-';
 	  seek IN, length($in{buf}), 0;
 	  while (!length $uncomp_buf)
 	    {
@@ -1845,6 +1863,14 @@ sub mime
     {
       my $suf = lc $1;
       $r[0] = "application/x-suffix-$suf+octet-stream";
+    }
+
+  if ($r[0] =~ m{^application/x-(ms-dos-|)executable$})
+    {
+      if (-x '/usr/bin/upx')
+        {
+	  $r[0] .= '+upx' unless run(['/usr/bin/upx', '-q', '-q', '-t', $in{file}]);
+	}
     }
 
   ${$in{uncomp}} = $uncomp_buf if ref $in{uncomp} eq 'SCALAR';

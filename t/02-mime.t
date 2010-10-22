@@ -20,17 +20,17 @@ closedir DIR;
 %exp = 
 (
   ## 0.22 used to say application/x-lzma, but true binary data. Not even compressed.
-  'lxknf09SCc0.bin' => [ 'application/octet-stream', 'binary' ], 
+  'lxknf09SCc0.bin' => [ 'application/octet-stream', qr{^(binary|)$} ], 
   ## actually 'application/x-desktop' or 'text/x-desktop'
   'Desktop.directory' => [ 'text/plain', 'utf-8', 'UTF-8 Unicode text' ],
   'xterm-snippet.desktop' => ['text/x-desktop','utf-8','UTF-8 Unicode Pascal program text',['text/x-pascal','application/x-desktop']],
-  'IPA-snippet.pfa' => [ 'text/x-font-type1', 'us-ascii', 'PostScript Type 1 font text (OmegaSerifIPA 001.000)', [ 'text/plain', 'application/x-font-type1' ] ],
-  'Times-Roman-snippet.afm' => ['text/x-font-sunos-news','us-ascii','ASCII font metrics',['text/x-fortran','application/x-font-sunos-news']], 
+  'IPA-snippet.pfa' => [ 'text/x-font-type1', qr{^(us-ascii|)$}, 'PostScript Type 1 font text (OmegaSerifIPA 001.000)', [ 'text/plain', 'application/x-font-type1' ] ],
+  'Times-Roman-snippet.afm' => [qr{^(application|text)/x-font-sunos-news$}, 'us-ascii','ASCII font metrics',['text/x-fortran','application/x-font-sunos-news']], 
   ## actually 'text/x-xslfo'
-  'columns-snippet.fo' => ['application/xml','us-ascii','XML  document text'],
-  'empty.odt' => ['application/vnd.oasis.opendocument.text+zip','binary','Zip archive data, at least v2.0 to extract, mime type application/vnd OpenDocument Text'],
+  'columns-snippet.fo' => [qr{^(text/plain|application/xml)$},'us-ascii','XML  document text'],
+  'empty.odt' => ['application/vnd.oasis.opendocument.text+zip',qr{^(binary|)$},'Zip archive data, at least v2.0 to extract, mime type application/vnd OpenDocument Text'],
   'ruhyphal.tex' => ['text/plain','iso-8859-1','ISO-8859 English text'],
-  'test2.tga' => ['image/x-tga','binary','Targa image data - RGB - RLE 32 x 32',['application/octet-stream','image/x-tga']],
+  'test2.tga' => ['image/x-tga',qr{^(binary|)$},'Targa image data - RGB - RLE 32 x 32',['application/octet-stream','image/x-tga']],
   ## actually a 'audio/x-mpegurl'
   'wzbc-2009-06-28-17-00.m3u' => ['text/plain','us-ascii','M3U playlist text'],
 );
@@ -43,8 +43,13 @@ if (-f $shared_mime_info_db)
       {
 	my $r = $u->mime("$d/$f");
 	diag("test file $f not in \%exp: ", Dumper $r),last unless $exp{$f};
-	cmp_ok($r->[0], 'eq', $exp{$f}[0]||'', "$f: $r->[0]");
-	cmp_ok($r->[1], 'eq', $exp{$f}[1]||'', "$f: \t\t\tcharset=$r->[1]");
+	my $ref = ref($exp{$f}[0]||'')||'';
+	if ($ref eq 'Regexp') { cmp_ok($r->[0], '=~', $exp{$f}[0],     "$f: $r->[0]"); }
+	else                  { cmp_ok($r->[0], 'eq', $exp{$f}[0]||'', "$f: $r->[0]"); }
+
+	$ref = ref($exp{$f}[1]||'')||''; my $r1 = $r->[1]||'';
+	if ($ref eq 'Regexp') { cmp_ok($r1, '=~', $exp{$f}[1],     "$f: \t\t\tcharset=$r1"); }
+	else                  { cmp_ok($r1, 'eq', $exp{$f}[1]||'', "$f: \t\t\tcharset=$r1"); }
       }
   }
 else

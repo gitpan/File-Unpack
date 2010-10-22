@@ -8,6 +8,7 @@ file_unpack.pl
 children_fuser.pl
 
 helper/text=x-shellscript
+helper/application=x-iso9660-image
 
 t/00-load.t
 t/manifest.t
