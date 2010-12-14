@@ -76,11 +76,11 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.27
+Version 0.29
 
 =cut
 
-our $VERSION = '0.28';
+our $VERSION = '0.29';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -189,6 +189,12 @@ sub _locate_cpio_i
 }
 
 =head1 SYNOPSIS
+
+This perl module comes with an executable script:
+
+/usr/bin/file_unpack -h
+/usr/bin/file_unpack [-1] [-m] ARCHIVE...
+
 
 File::Unpack is an aggressive unpacker for archive files. We call it aggressive, 
 because it can recursivly descend into any freshly unpacked file, if it appears to be an 

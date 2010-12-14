@@ -1,5 +1,8 @@
 Revision history for File-Unpack
 
+0.29	jw, Tue Dec 14 23:19:02 CET 2010
+	Mention /usr/bin/file_unpack in perldoc
+
 0.28	jw, Fri Oct 22 14:29:09 CEST 2010
 	Look only at files and dirs, ignore special files.
 	Reading a pipe could block us endlessly.

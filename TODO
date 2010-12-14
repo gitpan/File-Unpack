@@ -1,0 +1,33 @@
+				jw, Wed Nov 24 18:15:15 CET 2010
+
+unshield
+--------
+ try unshield for .cab files that do not extract with cabextract.
+ Those would be Installshield CAB files rather than Microsoft CAB files.
+
+				jw, 2010-09-26 20:21
+
+How to decode Metamail contents?
+================================
+ The firt part is usually html, and thus file -i says text/html
+ ignoring the mime headers.
+
+ Content-Type: multipart/alternative;
+ Content-Type: multipart/
+ Content-Disposition: attachment; filename=Unknown.jpeg;
+ http://en.wikipedia.org/wiki/MIME
+
+metamail -w -x < saved-mail-body-from-mutt
+## often says says
+# metamail: Incomplete multipart message -- unexpected EOF
+# Cannot handle any part of multipart/alternative message
+
+# when I extract the parts between the boundary string and feed this
+# to metamail one by one, it works well.
+env METAMAIL_TMPDIR=. metamail -d -w jpeg.mm
+ This message contains 'image/jpeg`-format data.
+
+ which is being decoded and written to the file named "./Unknown.jpeg".
+ If you do not want this data, you probably should delete that file.
+ Wrote file ./Unknown.jpeg
+

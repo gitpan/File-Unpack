@@ -3,6 +3,7 @@ MANIFEST
 Makefile.PL
 ignore.txt
 README
+TODO
 Unpack.pm
 file_unpack.pl
 children_fuser.pl
