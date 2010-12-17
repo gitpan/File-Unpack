@@ -44,6 +44,7 @@ WriteMakefile(
 	'Getopt::Long' => 0,
 	'Pod::Usage' => 0,
     },
-    dist                => { COMPRESS => 'bzip2 -9f', SUFFIX => 'bz2', },
+    # don't use bzip2 for cpan uploads, win32 smoke testers cannot unpack bz2.
+    # dist                => { COMPRESS => 'bzip2 -9f', SUFFIX => 'bz2', },
     clean               => { FILES => 'File-Unpack-*' },
 );

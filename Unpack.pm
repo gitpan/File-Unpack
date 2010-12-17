@@ -42,6 +42,9 @@
 # * application/x-iso9660	-> "isoinfo -d -i %(src)s"
 # * PDF improvement: okular says: 'this document contains embedded files.' How can we grab those?
 
+use warnings;
+use strict;
+
 package File::Unpack;
 
 BEGIN
@@ -56,8 +59,6 @@ BEGIN
  eval 'use Filesys::Statvfs;';		# statvfs();
 }
 
-use warnings;
-use strict;
 use Carp;
 use File::Path;
 use File::Temp;			# tempdir() in _run_mime_handler.
@@ -76,11 +77,11 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.29
+Version 0.30
 
 =cut
 
-our $VERSION = '0.29';
+our $VERSION = '0.30';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -193,6 +194,7 @@ sub _locate_cpio_i
 This perl module comes with an executable script:
 
 /usr/bin/file_unpack -h
+
 /usr/bin/file_unpack [-1] [-m] ARCHIVE...
 
 
@@ -280,7 +282,7 @@ Otherwise C<exclude> always returns the list as an array ref.
 sub _glob_list_re
 {
   my @re;
-  return undef unless @_;
+  return unless @_;
   for my $text (@_)
     {
       # Taken from pdb2perl:glob2re() and adapted, to not match slashes in wildcards.
@@ -390,7 +392,7 @@ $SIG{'XFSZ'} = sub
 
 # if this returns 0, we test again and call it again, possibly.
 # if this returns nonzero, we just continue.
-sub _default_fs_warn()
+sub _default_fs_warn
 {
   carp "Filesystem (@_) is almost full.\n $0 paused for 30 sec.\n";
   sleep(30);
@@ -410,10 +412,11 @@ sub _fs_check
   $needed_p = 1.0  unless defined $needed_p;	# percent
   $needed_b = _bytes_unit($needed_b);
 
-  open DIR, "<", $self->{destdir} or 
-  opendir DIR, $self->{destdir} or return;
+  my $DIR;
+  open $DIR, "<", $self->{destdir} or 
+  opendir $DIR, $self->{destdir} or return;
   ## fileno() does not work with opendir() handles.
-  my $fd = fileno(DIR); return unless defined $fd;
+  my $fd = fileno($DIR); return unless defined $fd;
 
   for (;;)
     {
@@ -676,9 +679,8 @@ sub unpack
 
   die "internal error" unless $self->{input_dir};
 
-  my ($in_dir, $in_file) = ($1, $2) if $archive =~ m{^(.*/)([^/]*)$};
-  $in_dir ||='/';
-  $in_file||='';
+  my ($in_dir, $in_file) = ('/', '');
+     ($in_dir, $in_file) = ($1, $2) if $archive =~ m{^(.*/)([^/]*)$};
 
   my $inside_destdir = 1;
   my $subdir = $in_dir; # remainder after stripping $orig_archive_prefix / $self->{destdir}
@@ -734,7 +736,8 @@ sub unpack
 	      unless ($archive =~ m{^\Q$self->{destdir}\E/})
 		{
 		  mkpath($destdir);
-		  my $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
+		  my $destdir_in_file;
+		     $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
 
 		  if (-e "$destdir_in_file")
 		    {
@@ -900,7 +903,8 @@ sub run
 {
   shift if ref $_[0] ne 'ARRAY';	# toss $self object handle.
   my (@cmd) = @_;
-  my $opt = pop @cmd if ref $cmd[-1] eq 'HASH';
+  my $opt;
+     $opt = pop @cmd if ref $cmd[-1] eq 'HASH';
 
   # run the command with 
   # - STDIN closed, unless you specify an { in => ... }
@@ -954,7 +958,8 @@ sub run
 
 # die Dumper \@run if $cmd[0][0] eq '/usr/bin/rpm2cpio';
 
-  my $t	= IPC::Run::timer($opt->{every}-0.6) if $opt->{every};
+  my $t;
+     $t = IPC::Run::timer($opt->{every}-0.6) if $opt->{every};
   push @run, $t if $t;
 
   my $h = eval { IPC::Run::start @run; };
@@ -1103,12 +1108,14 @@ sub _run_mime_handler
       opendir DIR, $jail_base or last;
       my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
       closedir DIR;
-      my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
+      my $found0;
+         $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
       print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found0\n" if $self->{verbose} > 1;
       unless (@found)
         {
 	  rmdir $jail_base;
-	  my $name = $1 if $args->{src} =~ m{/([^/]+)$};
+	  my $name;
+	     $name = $1 if $args->{src} =~ m{/([^/]+)$};
           print STDERR "oops(i=$i): nothing unpacked?? Adding $name as is.\n" if $self->{verbose};
 	  return { error => "nothing unpacked" };
 	}
@@ -1127,7 +1134,8 @@ sub _run_mime_handler
     if defined($wanted_name) and $wanted_name ne $args->{destfile};
 
   $wanted_name = $args->{destfile} unless defined $wanted_name;
-  my $wanted_path = $destdir . "/" . $wanted_name if defined $wanted_name;
+  my $wanted_path;
+     $wanted_path = $destdir . "/" . $wanted_name if defined $wanted_name;
 
   my $unpacked = $jail_base;
   if (defined($wanted_name) and !-e $wanted_path)
@@ -1139,7 +1147,8 @@ sub _run_mime_handler
 	  opendir DIR, $jail_base;
           my @found = grep { $_ ne '.' and $_ ne '..' } readdir DIR;
           closedir DIR;
-          my $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
+          my $found0;
+	     $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
 
 	  if ($#found == 0 and $found0 eq $wanted_name)
 	    {
@@ -1190,10 +1199,10 @@ sub _prep_configdir
   mkpath($dir);
   my $j = $self->{json}->allow_nonref();
 
-  open SH, ">", "$dir/config.sh";
-  open JS, ">", "$dir/config.js";
+  open my $SH, ">", "$dir/config.sh";
+  open my $JS, ">", "$dir/config.js";
 
-  print JS "{\n";
+  print $JS "{\n";
 
   for my $group ('', 'minfree', 'exclude')
     {
@@ -1204,16 +1213,16 @@ sub _prep_configdir
 	  next if $k eq 'recursion_level';
 	  next if ref $val;		# we only take scalars.
 	  my $name = ($group eq '') ? $k : "${group}_$k";
-	  printf SH "%s=%s\n", shell_quote(uc "fu_$name"), shell_quote($val);
-	  printf JS "%s:%s,\n", $j->encode($name), $j->encode($val);
+	  printf $SH "%s=%s\n", shell_quote(uc "fu_$name"), shell_quote($val);
+	  printf $JS "%s:%s,\n", $j->encode($name), $j->encode($val);
 	}
     }
 
-  print SH "FU_VERSION=$VERSION\n";
-  print JS qq["fu_version":"$VERSION"\n}\n];
+  print $SH "FU_VERSION=$VERSION\n";
+  print $JS qq["fu_version":"$VERSION"\n}\n];
 
-  close SH;
-  close JS;
+  close $SH;
+  close $JS;
   return $dir;
 }
 
@@ -1611,7 +1620,8 @@ sub mime
 {
   my ($self, @in) = @_;
 
-  my %in = %{$in[0]}  if !$#in and ref $in[0] eq 'HASH';
+  my %in;
+     %in = %{$in[0]}  if !$#in and ref $in[0] eq 'HASH';
   unshift @in, 'file' if !$#in and !ref $in[0];
   %in = @in if $#in > 0;
 
@@ -1804,18 +1814,18 @@ sub mime
       if ($bz)
         {
 	  ## this only works if this is a first level call.
-	  open IN, "<", $in{file} unless $in{file} eq '-';
-	  seek IN, length($in{buf}), 0;
+	  open my $IN, "<", $in{file} unless $in{file} eq '-';
+	  seek $IN, length($in{buf}), 0;
 	  while (!length $uncomp_buf)
 	    {
               my $stat = $bz->bzinflate($in{buf}, $uncomp_buf);
 	      # $bz->bzflush($uncomp_buf);	# wishful thinking....
 	      last if length($in{buf});   	# did not consume, strange.
 	      last if length $stat;		# something wrong, or file ends.
-	      last unless read IN, $in{buf}, 10*1024, length($in{buf});		# try to get more data
+	      last unless read $IN, $in{buf}, 10*1024, length($in{buf});		# try to get more data
 	    }
-	  my $slurped = tell IN;	# likely to get ca. 800k yacc!
-	  close IN;
+	  my $slurped = tell $IN;	# likely to get ca. 800k yacc!
+	  close $IN;
           # use Data::Dumper; warn Dumper $stat, length($in{buf}), length($uncomp_buf), "slurped=$slurped";
 	}
     }
