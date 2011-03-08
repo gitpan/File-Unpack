@@ -1,5 +1,9 @@
 Revision history for File-Unpack
 
+0.31	jw, Wed Mar  9 00:01:50 CET 2011
+	Added list() method.
+	Spellchecked pod.
+
 0.30 	jw, Fri Nov 19 19:13:53 CET 2010
 	Run through perlcritic.
         Switch back to gz to help smoke testers

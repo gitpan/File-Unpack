@@ -77,11 +77,11 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.30
+Version 0.31
 
 =cut
 
-our $VERSION = '0.30';
+our $VERSION = '0.31';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -150,6 +150,7 @@ my @builtin_mime_handlers = (
   [ 'application=pdf',	      qr{pdf}, [qw(/usr/bin/pdftotext %(src)s %(destfile)s.txt)], '&', [qw(/usr/bin/pdfimages -j %(src)s pdfimages)] ],
 );
 
+## CAUTION keep _my_shell_quote in sync with all _locate_* functions.
 sub _locate_tar
 {
   my $self = shift;
@@ -198,11 +199,10 @@ This perl module comes with an executable script:
 /usr/bin/file_unpack [-1] [-m] ARCHIVE...
 
 
-File::Unpack is an aggressive unpacker for archive files. We call it aggressive, 
-because it can recursivly descend into any freshly unpacked file, if it appears to be an 
-archive itself.
-It also uncompresses files where needed. The ultimate goal of File::Unpack is
-to extract as much readable text (ascii or any other encoding) as possible.
+File::Unpack is an aggressive unpacker for archive files. Aggressive means, it can 
+recursivly descend into freshly unpacked files, if they are archives themselves.
+It also uncompresses files where needed. File::Unpack will extract
+as much readable text (ascii or any other encoding) as possible.
 Most of the currently known archive file formats are supported.
 
     use File::Unpack;
@@ -211,7 +211,7 @@ Most of the currently known archive file formats are supported.
     my $u = File::Unpack->new(logfile => \$log);
 
     my $m = $u->mime('/etc/init.d/rc');
-    print "$m->[0]; charset=$m->[1]\n"
+    print "$m->[0]; charset=$m->[1]\n";
     # text/x-shellscript; charset=us-ascii
 
     map { print "$_->{name}\n" } @{$u->mime_handler()};
@@ -228,8 +228,8 @@ Most of the currently known archive file formats are supported.
 
     ...
 
-Examines the contents of an archive file or directory by extensive mime-type
-analysis. The contents is unpacked recursively to the given destination
+C<unpack()> examines the contents of an archive file or directory using an extensive 
+mime-type analysis. The contents is unpacked recursively to the given destination
 directory; a listing of the unpacked files is reported through the built in
 logging facility during unpacking. Most common archive file formats are handled 
 directly; more can easily be added as mime-type helper plugins.
@@ -240,17 +240,19 @@ directly; more can easily be added as mime-type helper plugins.
 
 my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '100M', verbose => 1);
 
-Creates an unpacker instance. The parameter C<destdir> must be writable location; all output 
-files and directories are placed inside destdir. Subdirectories will be created in an attempt to reflect the 
-structure of the input. Destdir defaults to the current directory; relative paths 
-are resolved immediatly, so that chdir() after calling new is harmless.
+Creates an unpacker instance. The parameter C<destdir> must be a writable location; all output 
+files and directories are placed inside this destdir. Subdirectories will be
+created in an attempt to reflect the structure of the input. Destdir defaults
+to the current directory; relative paths are resolved immediatly, so that
+chdir() after calling new is harmless.
 
 The parameter C<logfile> can be a reference to a scalar, a filename, or a filedescriptor.
 The logfile starts with a JSON formatted prolog, where all lines start 
 with printable characters.
-For each file unpacked, a one line record is appended, started with a single 
-whitespace ' ', and terminated by "\n".
-Each record is formatted as a JSON " key: value\n" pair, where key is the filename, and value a hash including mime, size, and other information.
+For each file unpacked, a one line record is appended, starting with a single 
+whitespace ' ', and terminated by "\n". The format is a JSON-encoded " 'key':
+{value}\n" pair, where key is the filename, and value is a hash including 'mime',
+'size', and other information.
 The logfile is terminated by an epilog, where each line starts with a printable character.
 Per default, the logfile is sent to STDOUT. 
 
@@ -259,9 +261,9 @@ easily fill up any available disk space when unpacked. Files hitting this limit 
 be silently truncated.  Check the logfile records or epilog to see if this has happened.
 BSD::Resource is used manipulate RLIMIT_FSIZE. To be implemented.
 
-The parameter C<one_shot> can optionally be set to non-zero, to limit unpacking to one level of unpacking.
-Unpacking of very well known compressed archives like e.g. tar.bz2 is considered one level only. The exact semantics 
-depend on the configured mime helpers.
+The parameter C<one_shot> can optionally be set to non-zero, to limit unpacking to one step of unpacking.
+Unpacking of well known compressed archives like e.g. '.tar.bz2' is considered one step only. If uncompressing 
+is considered an extra step depends on the configured mime helpers.
 
 =head2 exclude
 
@@ -272,7 +274,8 @@ The exclude-list items are shell glob patterns, where '*' or '?' never match '/'
 
 You can use force to have any of these removed after unpacking.
 Use (vcs => 1) to exclude a long list of known version control system directories, use (vcs => 0) to remove them.
-The default is C<exclude(empty => 1)>, which is the same as (empty_file => 1, empty_dir => 1) -- having the obvious meaning.
+The default is C<< exclude(empty => 1) >>, which is the same as C<< exclude(empty_file => 1, empty_dir => 1) >> -- 
+having the obvious meaning.
 
 (re => 1) returns the active exclude-list as a regexp pattern. 
 Otherwise C<exclude> always returns the list as an array ref.
@@ -537,11 +540,11 @@ sub DESTROY
 
 $u->unpack($archive, [$destdir])
 
-Determines the contents of an archive and recursivly extracts its individual files.  
+Determines the contents of an archive and recursivly extracts its files.  
 An archive may be the pathname of a file or directory. The extracted contents will be 
 stored in "destdir/$subdir/$dest_name", where dest_name is the filename
-component of $archive without any leading pathname components, and possibly
-stripped or added suffix. (Subdir defaults to ''.) If $archive is a directory,
+component of archive without any leading pathname components, and possibly
+stripped or added suffix. (Subdir defaults to ''.) If archive is a directory,
 then dest_name will also be a directory. If archive is a file, the type of
 dest_name depends on the type of packing: If the archive expands to multiple
 files, dest_name will be a directory, otherwise it will be a file. If a file of
@@ -551,7 +554,7 @@ For each extracted file, a record is written to the logfile.
 When unpacking is finished, the logfile contains one valid JSON structure.
 Unpack achieves this by writing suitable prolog and epilog lines to the logfile.
 
-The actual unpacking is dispatched to mime-type specfic mime handlers,
+The actual unpacking is dispatched to mime-type specfic handlers,
 selected using C<mime>. A mime-handler can either be built-in code, or an
 external program (or shell-script) found in a directory registered with
 C<mime_handler_dir>. The standard place for external handlers is
@@ -580,13 +583,13 @@ After the mime-handler is finished, C<unpack> examines the files it created.
 If it created no files in F<destdir>, an error is reported, and the
 F<source_path> may be passed to other unpackers, or finally be added to the log as is.
 
-If the mime-handler wants to express, that F<source_path> is already unpacked as far as possible
-and it should be added to the log without any errir messages, it should create a symbolic link 
+If the mime-handler wants to express that F<source_path> is already unpacked as far as possible
+and should be added to the log without any error messages, it creates a symbolic link 
 F<destdir> pointing to F<source_path>.
 
 
 The system considers replacing the
-directory with a file, under the following conditions:
+directory with a file, if all of the following conditions are met:
 
 =over
 
@@ -596,7 +599,7 @@ There is exactly one file in the directory.
 
 =item *
 
-The file name is identical with directory name, 
+The file name is identical with the directory name, 
 except for one changed or removed
 suffix-word. (*.tar.gz -> *.tar; or *.tgz -> *.tar) 
 
@@ -607,22 +610,26 @@ The file must not already exist in the parent directory.
 =back
 
 C<unpack> prepares 20 empty subdirectory levels and chdirs the unpacker 
-in there. This number can be adjusted using C<new(dot_dot_safeguard => 20)>.
+in there. This number can be adjusted using C<< new(dot_dot_safeguard => 20) >>.
 A directory 20 levels up from the current working dir has mode 0 while 
 the mime-handler runs. C<unpack> can optionally chmod(0) the parent of the subdirectory 
-after it chdirs the unpacker inside. Use C<new(jail_chmod0 => 1)> for this, default 
+after it chdirs the unpacker inside. Use C<< new(jail_chmod0 => 1) >> for this, default 
 is off. If enabled, a mime-handler trying to place files outside of the specified
 destination_path may receive 'permission denied' conditions. 
 
 These are special hacks to keep badly constructed 
-tar balls, cpio, or zip archives at bay.
+tar-balls, cpio-, or zip-archives at bay.
 
-Please note, that all this helps against relative paths, but not against absolute 
-paths in archives.
-It is the responsibility of mime-handlers to not create absolute paths.
+Please note, that this can help against archives containing relative paths 
+(like starting with '../../../foo'), but will be ineffective with absolute paths 
+(starting with '/foo').
+It is the responsibility of mime-handlers to not create absolute paths;
+C<unpack> should not be run as the root user, to minimize the risk of
+compromising the root filesystem.
 
-A missing mime-handler is skipped. A mime-handler is expected to return an
-exit status of 0 upon success. If it runs into a problem, it should print lines
+A missing mime-handler is skipped, and subsequent handlers may take effect. A
+mime-handler is expected to return an exit status of 0 upon success. If it runs
+into a problem, it should print lines
 starting with the affected filenames to stderr.
 Such errors are recorded in the log with the unpacked archive, and as far as
 files were created, also with these files.
@@ -878,9 +885,9 @@ sub unpack
 $u->run([argv0, ...], @redir, ... { init => sub ..., in, out, err, watch, every, prog, ... })
 
 A general purpose fork-exec wrapper, based on IPC::Run. STDIN is closed, unless you specify
-an in => as described in IPC::Run. STDERR and STDOUT are both printed to
-STDOUT, prefixed with 'E: ' and 'O: ' respectively, unless you specify out =>,
-err =>, or out_err => ... for both.  
+an C<< in => >> as described in IPC::Run. STDERR and STDOUT are both printed to
+STDOUT, prefixed with 'E: ' and 'O: ' respectively, unless you specify C<< out => >>,
+C<< err => >>, or C<< out_err => >> ... for both.  
 
 Using redirection operators in @redir takes precedence over the above in/out/err 
 redirections. See also L<IPC::Run>. If you use the options in/out/err, you should
@@ -989,12 +996,30 @@ It formats a command array used with run() as a properly escaped shell command s
 
 =cut 
 
+sub _my_shell_quote
+{
+  my @a = @_;
+  my $sub;
+  $sub = '\\&_locate_tar'    if $a[0] eq \&_locate_tar;
+  $sub = '\\&_locate_cpio_i' if $a[0] eq \&_locate_cpio_i;
+
+  if ($sub)
+    {
+      shift @a;
+      return "$sub " . shell_quote(@a);
+    }
+  return shell_quote(@a);
+}
+
 sub fmt_run_shellcmd
 {
   my @a = @_;
   @a = @{$a[0]{argvv}} if ref $a[0] eq 'HASH';
   my @r = ();
-  push @r, ref() ? '('.shell_quote(@$_).')' : shell_quote($_) foreach @a;
+  for my $a (@a)
+    {
+      push @r, ref($a) ? '('._my_shell_quote(@$a).')' : _my_shell_quote($a);
+    }
   my $r = join ' ', @r;
   $r =~ s{^\((.*)\)$}{$1} unless $#a;	# parenthesis around a single cmd are unneeded.
   return $r;
@@ -1237,10 +1262,9 @@ The words helper and handler are used as synonyms here, helpers often refer to
 external programs, where handlers refer to builtin shell commands. 
 Multiple directories can be registered, They are searched in reverse order, i.e. 
 last added takes precedence. Any external mime-handler takes precedence over built-in code.
-An array ref to the new list of directories is returned.
 
-The suffix_regexp is not used to find helpers. It is applied to derive the destination name 
-from the source name.
+The suffix_regexp is used to derive the destination name from the source name.
+It is not used for selecting helpers.
 
 Helpers are mapped to mime-types by their mime_name. The name can be constructed
 from the mimetype by replacing the '/' with a '=' character, and by using the
@@ -1249,13 +1273,14 @@ implicit '=ANY+' if needed.
 
  Examples:
 
-  Mimetype                   handler names tried in sequence
-  ----------------------------------------------------------
+  Mimetype                   handler names tried from top to bottom
+  -----------------------------------------------------------------
   image/png                  image=png 
                               image=ANY 
 			       image
-			        ANY=ANY
-				 ANY
+			        ANY=png
+			         ANY=ANY
+				  ANY
 
   application/vnd.oasis+zip  application=vnd.oasis+zip 
                               application=ANY+zip
@@ -1264,14 +1289,15 @@ implicit '=ANY+' if needed.
 			         application=ANY
 				      ...
   
-A trailing '=ANY' is implicit, as shown by these examples. The rules for
-determinig precedence are this:
+A trailing '=ANY' is implicit, as shown by these examples. 
+The rules for precedence are this:
 
 =over 
 
 =item *
 
-Search in one directory is exhaused before the next is considered.
+Search in the latest directory is exhaused first, then the previously added directory is considered in turn,
+up to all directories have been traversed, or until a matching helper is found.
  
 =item *
 
@@ -1283,13 +1309,13 @@ A wildcard before the '=' sign lowers precedence more than one after it.
 
 =back
 
-The mapping takes place when C<mime_handler_dir> is called, later additions are 
-not recognized. C<mime_handler> does not do any implicit expansions. Call it
+The mapping takes place when C<mime_handler_dir> is called. Adding helper scripts to a directory
+afterwards has no effect. C<mime_handler> does not do any implicit expansions. Call it
 multiple times with the same handler command and different names if needed.
 The default argument list is "%(src)s %(destfile)s %(destdir)s %(mime)s %(descr)s %(configdir)s" --
 this is applied, if no args are given and no redirections are given. See also C<unpack> for more semantics and how a handler should behave.
 
-Both methods return an ARRAY-ref of all currently known mime handlers.
+Both methods return an ARRAY-ref of HASHes describing all known (old and newly added) mime handlers.
 
 =cut 
 my @def_mime_handler_fmt = qw(%(src)s %(destfile)s %(destdir)s %(mime)s %(descr)s %(configdir)s);
@@ -1331,6 +1357,34 @@ sub mime_handler
   delete $self->{mime_orcish};	# to be rebuilt in find_mime_handler()
 
   return $self->{mime_handler};
+}
+
+=head2 list
+
+Returns an ARRAY of preformatted patterns and mime-handlers.
+
+Example:
+
+  printf @$_ for $u->list(); 
+
+=cut
+
+sub list
+{
+  my ($self) = @_;
+
+  my $width = 10;
+  for my $m (@{$self->{mime_handler}})
+    {
+      $width = length($m->{pat}) if length($m->{pat}) > $width;
+    }
+
+  my @r;
+  for my $m (@{$self->{mime_handler}})
+    {
+      push @r, [ "%-${width}s %s\n", $m->{pat}, $m->{fmt_p} ];
+    }
+  return @r;
 }
 
 sub mime_handler_dir
@@ -1504,7 +1558,7 @@ sub _finalize_argvv
 
 $u->minfree(factor => 10, bytes => '100M', percent => '3%', warning => sub { .. })
 
-THE ACTUAL TESTS ARE NOT IMPLEMENTED.
+THESE TESTS ARE TO BE IMPLEMENTED.
 
 Guard the filesystem (destdir) against becoming full during C<unpack>. 
 Before unpacking each source archive, the free space is measured and compared against three conditions:
@@ -1517,7 +1571,7 @@ The archive size multiplied with the given factor must fit into the filesystem.
 
 =item *
 
-The given number of bytes in optional K, M, G, or T units must be free.
+The given number of bytes (in optional K, M, G, or T units) must be free.
 
 =item *
 
@@ -1525,14 +1579,14 @@ The filesystem must have at least the given free percentage. The '%' character i
  
 =back
 
-The warning method is called with the following parameters: 
+The warning method is called if any of the above conditions fail. Its signature is: 
   &warning->($pathname, $full_percentage, $free_bytes, $free_inodes);
 It is expected to print an appropriate warning message, and delay a few seconds.
 It should return 0 to cause a retry. It should return nonzero to continue unpacking.
 The default warning method prints a message to STDERR, waits 30 seconds, and returns 0.
 
-The filesystem may still become full and unpacking may fail, if e.g. factor was chosen lower then 
-the compression ratio of the unpacked archives.
+The filesystem may still become full and unpacking may fail, if e.g. factor was chosen lower than 
+the average compression ratio of the archives.
 
 =cut
 
@@ -1575,34 +1629,37 @@ $u->mime(fd => \*STDIN, file => "what-was-opened")
 
 Determines the mimetype (and optionally additional information) of a file.
 The file can be specified by filename, by a provided buffer or an opened filedescriptor.
-For the latter two casese, speifying the filename is optional, and used for diagnostics.
+For the latter two cases, specifying a filename is optional, and used only for diagnostics.
 
-C<mime> uses Christos Zoulas' excellent libmagic exposed via File::LibMagic and the
-shared-mime-info database from freedesktop.org exposed via
+C<mime> uses libmagic by Christos Zoulas exposed via File::LibMagic and also uses
+the shared-mime-info database from freedesktop.org exposed via
 File::MimeInfo::Magic, if available.  Either one is sufficient, but having both
 is better. LibMagic sometimes says 'text/x-pascal', although we have a F<.desktop>
-file, or returns says 'text/plain', but has contradicting details in its description.
+file, or says 'text/plain', but has contradicting details in its description.
 
-C<File::MimeInfo::Magic::magic> is consulted where the libmagic output is dubious. E.g. when the desciption says something interesting like 'Debian binary package (format 2.0)' but the mimetype says 'application/octet-stream'.
+C<File::MimeInfo::Magic::magic> is consulted where the libmagic output is dubious. E.g. when 
+the desciption says something interesting like 'Debian binary package (format 2.0)' but the 
+mimetype says 'application/octet-stream'. The combination of both libraries gives us 
+excellent reliability in the critical field of mime-type recognition.
 
 This implementation also features multi-level mime-type recognition for efficient unpacking.
-If we'd recognize a large bzipped tar ball only as bzip, we'd unpack a huge
-temporary tar-file, consuming the same amount of disk space as its content,
-which C<unpack> would extract in a second step.  The multi-level recognition
+When e.g. unpacking a large bzipped tar archive, this saves us from creating a
+huge temporary tar-file which C<unpack> would extract in a second step.  The multi-level recognition
 returns 'application/x-tar+bzip2' in this case, and allows for a mime-handler
 to e.g. pipe the bzip2 contents into tar (which is exactly what 'tar jxvf'
 does, making a very simple and efficient mime-handler).
 
 C<mime> returns a 3 or 4 element arrayref with mimetype, charset, description, diff;
-where diff is only present when both methods disagree.
+where diff is only present when the libfile and shared-mime-info methods disagree.
 
 In case of 'text/plain', an additional rule based on file name suffix is used to allow
-recognizing well known plain text pack formats. 
+recognition of well known plain text pack formats. 
 We return 'text/x-suffix-XX+plain', where XX is one of the recognized suffixes
 (in all lower case and without the dot).  E.g. a plain mmencoded file has no
 header and looks like 'plain/text' to all the known magic libraries. We
 recognize the suffixes .mm, .b64, and .base64 for this (case insignificant).
-A similar rule exitst for 'application/octect-stream'. It may trigger if lzma recognition fails.
+A similar rule exitst for 'application/octect-stream'. It may trigger e.g. for
+lzma compressed files which fail to provide a magic number.
 
 Examples:
  
@@ -1926,11 +1983,11 @@ wheels re-invented here.
 
 This is the prefered mimetype engine. It disregards the suffix, recognizes more
 types than any of the alternatives, and uses exactly the same engine as
-/usr/bin/file in your openSUSE system. It also returns charset and description
+/usr/bin/file in openSUSE systems. It also returns charset and description
 information.  We crossreference the description with the mimetype to detect
 weaknesses, and consult File::MimeInfo::Magic and some own logic, for e.g.
 detecting LZMA compression which fails to provide any recognizable magic.
-Required if you use C<mime>; not a hard requirement.
+Required if you use C<mime>; otherwise not a hard requirement.
 
 =item File::MimeInfo::Magic
 
@@ -1969,9 +2026,9 @@ Used for formatting the logfile. Required.
 =item Archive::Extract
 
 Archive::Extract tries first to determine what type of archive you are passing
-it, by inspecting its suffix. It does not do this by using Mime magic.  Maybe
-this module should use something like "File::Type" to determine the type,
-rather than blindly trust the suffix. [quoted from perldoc]
+it, by inspecting its suffix. 'Maybe this module should use something like
+"File::Type" to determine the type, rather than blindly trust the suffix'.
+[quoted from perldoc]
 
 Set $Archive::Extract::PREFER_BIN to 1, which will prefer the use of command 
 line programs and won't consume so much memory. Default: use "Archive::Tar".
