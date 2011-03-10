@@ -1,5 +1,10 @@
 Revision history for File-Unpack
 
+0.32	jw, Thu Mar 10 01:52:53 CET 2011
+	Fixed setlimit code, to be more robust.
+	Fixed logfile JSON syntax, with a dummy Element in the epilog.
+	Added 06-logfile.t to test the logfile syntax.
+
 0.31	jw, Wed Mar  9 00:01:50 CET 2011
 	Added list() method.
 	Spellchecked pod.

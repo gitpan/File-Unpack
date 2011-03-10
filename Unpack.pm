@@ -1,5 +1,5 @@
 #
-# (C) 2010, jnw@cpan.org, all rights reserved.
+# (C) 2010-2011, jnw@cpan.org, all rights reserved.
 # Distribute under the same license as Perl itself.
 #
 #
@@ -77,11 +77,11 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.31
+Version 0.32
 
 =cut
 
-our $VERSION = '0.31';
+our $VERSION = '0.32';
 
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
@@ -250,16 +250,18 @@ The parameter C<logfile> can be a reference to a scalar, a filename, or a filede
 The logfile starts with a JSON formatted prolog, where all lines start 
 with printable characters.
 For each file unpacked, a one line record is appended, starting with a single 
-whitespace ' ', and terminated by "\n". The format is a JSON-encoded " 'key':
-{value}\n" pair, where key is the filename, and value is a hash including 'mime',
+whitespace ' ', and terminated by "\n". The format is a JSON-encoded C<< "key":
+{value},\n >> pair, where key is the filename, and value is a hash including 'mime',
 'size', and other information.
 The logfile is terminated by an epilog, where each line starts with a printable character.
+As part of the epilog, a dummy file named "\" with an empty hash is added to the list. 
+It should be ignored while parsing.
 Per default, the logfile is sent to STDOUT. 
 
 The parameter C<maxfilesize> is a safeguard against compressed sparse files. Such files could 
 easily fill up any available disk space when unpacked. Files hitting this limit will 
 be silently truncated.  Check the logfile records or epilog to see if this has happened.
-BSD::Resource is used manipulate RLIMIT_FSIZE. To be implemented.
+BSD::Resource is used manipulate RLIMIT_FSIZE.
 
 The parameter C<one_shot> can optionally be set to non-zero, to limit unpacking to one step of unpacking.
 Unpacking of well known compressed archives like e.g. '.tar.bz2' is considered one step only. If uncompressing 
@@ -279,6 +281,8 @@ having the obvious meaning.
 
 (re => 1) returns the active exclude-list as a regexp pattern. 
 Otherwise C<exclude> always returns the list as an array ref.
+
+Symbolic links are always excluded.
 
 =cut
 
@@ -373,7 +377,8 @@ sub log
 
 sub logf
 {
-  my ($self,$file,$hash) = @_;
+  my ($self,$file,$hash,$suff) = @_;
+  $suff = ",\n" unless defined $suff;
   my $json = $self->{json} ||= JSON->new()->ascii(1);
   if (my $fp = $self->{lfp})
     {
@@ -383,7 +388,7 @@ sub logf
       $str =~ s{^\{}{}s;
       $str =~ s{\}$}{}s;
       die "logf failed to encode newline char: $str\n" if $str =~ m{(?:\n|\r)};
-      $self->log(" $str,\n");
+      $self->log(" $str$suff");
     }
 }
 
@@ -476,8 +481,15 @@ sub new
 
   if ($obj{maxfilesize})
     {
-      eval { no strict; BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, RLIM_INFINITY); }
-       or carp "WARNING maxfilesize=$obj{maxfilesize} ignored:\n $@\n Maybe package perl-BSD-Resource is not installed??\n\n";
+      eval 
+        { 
+	  no strict; 
+	  # if RLIM_INFINITY is seen as an attempt to increase limits, we would fail. Ignore this.
+          BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, RLIM_INFINITY) or
+          BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, $obj{maxfilesize}) or
+	  warn "RLIMIT_FSIZE($obj{maxfilesize}) failed\n";
+	}
+       or carp "WARNING maxfilesize=$obj{maxfilesize} ignored:\n $@ $!\n Maybe package perl-BSD-Resource is not installed??\n\n";
     }
 
   $obj{minfree}{factor} = 10    unless defined $obj{minfree}{factor};
@@ -553,6 +565,8 @@ component is created to avoid any conflicts.
 For each extracted file, a record is written to the logfile.
 When unpacking is finished, the logfile contains one valid JSON structure.
 Unpack achieves this by writing suitable prolog and epilog lines to the logfile.
+The logfile can also be parsed line by line. All file records is one line and start 
+with a ' ' whitespace, and end in a ',' comma. Everything else is prolog or epilog.
 
 The actual unpacking is dispatched to mime-type specfic handlers,
 selected using C<mime>. A mime-handler can either be built-in code, or an
@@ -633,6 +647,8 @@ into a problem, it should print lines
 starting with the affected filenames to stderr.
 Such errors are recorded in the log with the unpacked archive, and as far as
 files were created, also with these files.
+
+Symbolic links are ignored while unpacking.
 
 =cut
 
@@ -865,8 +881,9 @@ sub unpack
       my $epilog = {end => scalar localtime};
       $epilog->{missing_unpacker} = \@missing_unpacker if @missing_unpacker;
       my $s = $self->{json}->encode($epilog);
-      $s =~ s@^{@},@;
-      $self->log($s . ";\n");
+      # a dummy entry at the end, to compensate for the trailing comma
+      $s =~ s@^{@"/":{}},@;
+      $self->log($s . "\n");
 
       if ($self->{lfp} ne $self->{logfile})
         {
@@ -2097,7 +2114,7 @@ for tcsh too.
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright 2010 Juergen Weigert.
+Copyright 2010,2011 Juergen Weigert.
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published
