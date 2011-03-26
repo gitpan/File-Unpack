@@ -128,6 +128,7 @@ if ($list_perlish)
 if ($list_only)
   {
     printf @$_ for $u->list();
+print Dumper POSIX::localeconv();
     exit 0;
   }
 

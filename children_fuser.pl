@@ -44,7 +44,7 @@ sub fuser
 	}
     }
 
-  # weed out those who are not in our family
+  # Weed out those who are not in our family
   if ($ppid > 1)
     {
       for my $p (keys %p)
@@ -53,7 +53,9 @@ sub fuser
 	  my $pid = $p;
 	  while ($pid)
 	    {
-	      if ($pid == $ppid)
+	      # Those that have ppid==1 may also belong to our family. 
+	      # We never know.
+	      if ($pid == $ppid or $pid == 1)
 		{
 		  $family = 1;
 		  last;

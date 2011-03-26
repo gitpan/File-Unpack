@@ -37,7 +37,7 @@
 #      # th_en_US.dat is an 11MB thesaurus in OOo
 #      skip if $from =~ m{(/(ustar|pax)\-big\-\d+g\.tar\.bz2|/th_en_US\.dat|/testtar\.tar|\.html\.(ru|ja|ko\.euc-kr|fr|es|cz))$}
 #
-# * use LWP::Simple::getstore() if $archive =~ m{^\S+://}
+# * use LWP::Simple::getstore() if $archive =~ m{^\w+://}
 # * application/x-debian-package is a 'application/x-archive' -> (ar xv /dev/stdin) < $qufrom";
 # * application/x-iso9660	-> "isoinfo -d -i %(src)s"
 # * PDF improvement: okular says: 'this document contains embedded files.' How can we grab those?
@@ -61,7 +61,7 @@ BEGIN
 
 use Carp;
 use File::Path;
-use File::Temp;			# tempdir() in _run_mime_handler.
+use File::Temp ();		# tempdir() in _run_mime_handler.
 use File::Copy ();
 use File::Compare ();
 use JSON;
@@ -70,6 +70,7 @@ use IPC::Run;			# implements File::Unpack::run()
 use Text::Sprintf::Named;	# used to parse @builtin_mime_handlers
 use Cwd 'getcwd';		# run(), moves us there and back. 
 use Data::Dumper;
+use POSIX ();
 
 =head1 NAME
 
@@ -77,15 +78,22 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.32
+Version 0.36
 
 =cut
 
-our $VERSION = '0.32';
+our $VERSION = '0.36';
 
+POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
 $ENV{SHELL} = '/bin/sh';
 delete $ENV{ENV};
+
+# what we name the temporary directories, while helpers are working.
+my $TMPDIR_TEMPL = '_fu_XXXXX';
+
+# no longer used by the tick-tick ticker to show where we are.
+# my $lsof = '/usr/bin/lsof';
 
 # Compress::Raw::Bunzip2 needs several 100k of input data, we special case this.
 # File::LibMagic wants to read ca. 70k of input data, before it says application/vnd.ms-excel
@@ -141,6 +149,7 @@ my @builtin_mime_handlers = (
   [ 'application=tar',       qr{(?:tar|gem)},      [\&_locate_tar,  qw(-xf %(src)s)] ],
   [ 'application=tar+bzip2', qr{tar\.bz2},         [\&_locate_tar, qw(-jxf %(src)s)] ],
   [ 'application=tar+gzip',  qr{t(?:ar\.gz|gz)},   [\&_locate_tar, qw(-zxf %(src)s)] ],
+#  [ 'application=tar+gzip',  qr{t(?:ar\.gz|gz)},      [qw(/home/testy/src/C/slowcat)], qw(< %(src)s |), [\&_locate_tar, qw(-zxf -)] ],
   [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/lzcat)], qw(< %(src)s |), [\&_locate_tar, qw(-xf -)] ],
   [ 'application=tar+lzma',  qr{tar\.(?:xz|lzma|lz)}, [qw(/usr/bin/xz -dc -f %(src)s)], '|', [\&_locate_tar, qw(-xf -)] ],
   [ 'application=rpm',       qr{(?:src\.r|s|r)pm}, [qw(/usr/bin/rpm2cpio %(src)s)], '|', [\&_locate_cpio_i] ],
@@ -687,6 +696,7 @@ sub unpack
       $archive = Cwd::fast_abs_path($archive) if -e $archive;
     }
 
+  my $start_time = time;
   if ($self->{recursion_level}++ == 0)
     {
       $self->{json} ||= JSON->new()->ascii(1);
@@ -765,7 +775,7 @@ sub unpack
 		  if (-e "$destdir_in_file")
 		    {
 		      print STDERR "unpack copy in: $destdir_in_file already exists, " if $self->{verbose};
-		      $destdir = File::Temp::tempdir("_XXXX", DIR => $destdir);
+		      $destdir = File::Temp::tempdir($TMPDIR_TEMPL, DIR => $destdir);
 		      $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
 		      print STDERR "using $destdir_in_file instead.\n" if $self->{verbose};
 		    }
@@ -878,7 +888,7 @@ sub unpack
 
   if (--$self->{recursion_level} == 0)
     {
-      my $epilog = {end => scalar localtime};
+      my $epilog = {end => scalar localtime, sec => time-$start_time };
       $epilog->{missing_unpacker} = \@missing_unpacker if @missing_unpacker;
       my $s = $self->{json}->encode($epilog);
       # a dummy entry at the end, to compensate for the trailing comma
@@ -986,6 +996,7 @@ sub run
      $t = IPC::Run::timer($opt->{every}-0.6) if $opt->{every};
   push @run, $t if $t;
 
+  $run[0][0] = $1 if $run[0][0] =~ m{^(.*)$}s;
   my $h = eval { IPC::Run::start @run; };
   return wantarray ? (undef, $@) : undef unless $h;
 
@@ -1074,7 +1085,7 @@ sub _run_mime_handler
   $dot_dot_safeguard = 2 if $dot_dot_safeguard < 2;
 
   mkpath($destdir);
-  my $jail_base = File::Temp::tempdir("_XXXX", DIR => $destdir);
+  my $jail_base = File::Temp::tempdir($TMPDIR_TEMPL, DIR => $destdir);
   my $jail = $jail_base . ("/_" x $dot_dot_safeguard);
   mkpath($jail);
 
@@ -1122,7 +1133,40 @@ sub _run_mime_handler
     { 
       debug => ($self->{verbose} > 2) ? $self->{verbose} - 2 : 0, 
       watch => $args->{src}, every => 5, fu_obj => $self, mime_handler => $h, 
-      prog => sub { $_[1]{tick}++; print "T: tick_tick $_[1]{tick}\n"; },
+      prog => sub 
+{
+  $_[1]{tick}++; 
+  if (my $p = _children_fuser($_[1]{watch}, POSIX::getpid()))
+    {
+      _fuser_offset($p);
+      # we may get muliple process with multiple filedescriptors.
+      # select the one that moves fastest. 
+      my $largest_diff = -1;
+      for my $pid (keys %$p)
+        {
+	  for my $fd (keys %{$p->{$pid}{fd}})
+	    {
+	      my $diff = ($p->{$pid}{fd}{$fd}{pos}||0) - ($_[1]{fuser}{$pid}{fd}{$fd}{pos}||0);
+	      if ($diff > $largest_diff)
+	        {
+		  $largest_diff = $diff;
+		  $p->{fastest_fd} = $p->{$pid}{fd}{$fd};
+		}
+	    }
+	}
+      # Stick with the one we had before, if none moves.
+      $p->{fastest_fd} = $_[1]{fuser}{fastest_fd} if $largest_diff <= 0;
+      $_[1]{fuser} = $p;
+      my $off = $p->{fastest_fd}{pos}||0;
+      my $tot = $p->{fastest_fd}{size}||(-s $_[1]{watch})||1;
+      my $name = $_[1]{watch}; $name =~ s{.*/}{};
+      printf "T: %s offset=%s (%.1f%%)\n", $name, _unit_bytes($off,1), ($off*100)/$tot;
+    }
+  else
+    {
+      print "T: $_[1]{watch} tick_tick $_[1]{tick}\n"; 
+    }
+},
     });
     
   chmod 0700, $jail_base if $self->{jail_chmod0};
@@ -1138,7 +1182,7 @@ sub _run_mime_handler
 
   # loop through all _: if it only contains one item , replace it with this item,
   # be it a file or dir. This uses $jail_tmp, an unused pathname.
-  my $jail_tmp = File::Temp::tempdir("_XXXX", DIR => $destdir);
+  my $jail_tmp = File::Temp::tempdir($TMPDIR_TEMPL, DIR => $destdir);
   rmdir $jail_tmp;
 
   # if only one file in $jail, move it up, and return 
@@ -1233,6 +1277,104 @@ sub _run_mime_handler
 
   return $unpacked;
 }
+
+sub _children_fuser
+{
+  my ($file, $ppid) = @_;
+  $ppid ||= 1;
+  $file = Cwd::abs_path($file);
+
+  opendir DIR, "/proc" or die "opendir /proc failed: $!\n";
+  my %p = map { $_ => {} } grep { /^\d+$/ } readdir DIR;
+  closedir DIR;
+
+  # get all procs, and their parent pids
+  for my $p (keys %p)
+    {
+      if (open IN, "<", "/proc/$p/stat")
+        {
+	  # don't care if open fails. the process may have exited.
+	  my $text = join '', <IN>;
+	  close IN;
+	  if ($text =~ m{\((.*)\)\s+(\w)\s+(\d+)}s)
+	    {
+	      $p{$p}{cmd} = $1;
+	      $p{$p}{state} = $2;
+	      $p{$p}{ppid} = $3;
+	    }
+	}
+    }
+
+  # Weed out those who are not in our family
+  if ($ppid > 1)
+    {
+      for my $p (keys %p)
+	{
+	  my $family = 0;
+	  my $pid = $p;
+	  while ($pid)
+	    {
+	      # Those that have ppid==1 may also belong to our family. 
+	      # We never know.
+	      if ($pid == $ppid or $pid == 1)
+		{
+		  $family = 1;
+		  last;
+		}
+	      last unless $p{$pid};
+	      $pid = $p{$pid}{ppid};
+	    }
+	  delete $p{$p} unless $family;
+	}
+    }
+
+  my %o; # matching open files are recorded here
+
+  # see what files they have open
+  for my $p (keys %p)
+    {
+      if (opendir DIR, "/proc/$p/fd")
+        {
+	  my @l = grep { /^\d+$/ } readdir DIR;
+	  closedir DIR;
+	  for my $l (@l)
+	    {
+	      my $r = readlink("/proc/$p/fd/$l");
+	      next unless defined $r;
+	      # warn "$p, $l, $r\n";
+	      if ($r eq $file)
+	        {
+	          $o{$p}{cmd} ||= $p{$p}{cmd};
+	          $o{$p}{fd}{$l} = { file => $file };
+		}
+	    }
+	}
+    }
+  return \%o;
+}
+
+# see if we can read the file offset of a file descriptor, and the size of its file.
+sub _fuser_offset
+{
+  my ($p) = @_;
+  for my $pid (keys %$p)
+    {
+      for my $fd (keys %{$p->{$pid}{fd}})
+        {
+	  if (open IN, "/proc/$pid/fdinfo/$fd")
+	    {
+	      while (defined (my $line = <IN>))
+	        {
+		  chomp $line;
+		  $p->{$pid}{fd}{$fd}{$1} = $2 if $line =~ m{^(\w+):\s+(.*)\b};
+		}
+	    }
+	  close IN;
+	  $p->{$pid}{fd}{$fd}{size} = -s $p->{$pid}{fd}{$fd}{file};
+	}
+    }
+}
+
 
 sub _prep_configdir
 {
@@ -1617,6 +1759,36 @@ sub _bytes_unit
   return $text;
 }
 
+sub _unit_bytes
+{
+  my ($number, $dec_places) = @_;
+  $dec_places = 2 unless defined $dec_places;
+  my $div = 1;
+  my $unit = '';
+  my $neg = '';
+  if ($number < 0)
+    {
+      $neg = '-'; $number = -$number;
+    }
+  if ($number > $div * 1024)
+    {
+      $div *= 1024; $unit = 'k'; 
+      if ($number > $div * 1024)
+        {
+	  $div *= 1024; $unit = 'm'; 
+	  if ($number > $div * 1024)
+	    {
+	      $div *= 1024; $unit = 'g'; 
+	      if ($number > $div * 1024)
+	        {
+		  $div *= 1024; $unit = 't'; 
+		}
+	    }
+	}
+    }
+  return sprintf "%s%.*f%s", $neg, $dec_places, ($number / $div), $unit;
+}
+
 # see fs.pm/check_fs_health()
 
 sub minfree
@@ -1717,7 +1889,7 @@ sub mime
       my $len = read $fd, $in{buf}, $UNCOMP_BUFSZ;
       return [ 'x-system/x-error', undef, "read '$f' failed: $!" ] unless defined $len;
       return [ 'x-system/x-error', undef, "read '$f' failed: $len: $!" ] if $len < 0;
-      return [ 'application/x-empty', undef, 'empty' ] if $len == 0;
+      return [ 'text/x-empty', undef, 'empty' ] if $len == 0;
       seek $fd, $pos, 0;
 
       close $fd unless $in{fd};
