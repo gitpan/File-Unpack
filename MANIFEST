@@ -9,6 +9,7 @@ file_unpack.pl
 children_fuser.pl
 
 helper/text=x-shellscript
+helper/application=x-shellscript
 helper/application=x-iso9660-image
 
 t/00-load.t
@@ -33,4 +34,5 @@ t/data/test2.tga
 t/data/wzbc-2009-06-28-17-00.m3u
 t/data/xterm-snippet.desktop
 t/data/lxknf09SCc0.bin
+t/data/monotone.info
 META.yml                                 Module meta-data (added by MakeMaker)

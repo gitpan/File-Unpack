@@ -1,5 +1,17 @@
 Revision history for File-Unpack
 
+0.39    jw, Wed Apr  6 18:25:26 CEST 2011
+	Try /._\d?/ name suffixes on collisions to avoid _fu_* directories if possible.
+	Added _chmod_add() to help creating readable files and executable directories.
+	Raised default maxfilesize from 100M to 2.5G, honors FILE_UNPACK_MAXFILESIZE too.
+
+0.38	Both File::LibMagic and File::MimeInfo::Magic fail on .info files.
+	We now ask perl -T and return application/x-text-mixed in that case.
+	Fixed comparison with RLIM_INFINITY, silencing false warnings.
+
+0.37	Fixed setrlimit() calls, to not explode, when the limit is already lower.
+	Minor cleanup.
+
 0.36	removed dependency on lsof, in favour of /proc and builtin
         _children_fuser(). tick-tick now shows the percentage of the fastest moving fd.
 

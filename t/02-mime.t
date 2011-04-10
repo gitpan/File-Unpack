@@ -33,12 +33,16 @@ closedir DIR;
   'test2.tga' => ['image/x-tga',qr{^(binary|)$},'Targa image data - RGB - RLE 32 x 32',['application/octet-stream','image/x-tga']],
   ## actually a 'audio/x-mpegurl'
   'wzbc-2009-06-28-17-00.m3u' => ['text/plain','us-ascii','M3U playlist text'],
+
+  ## File::LibMagic says application/octet-stream here:
+  'monotone.info' => ['application/x-text-mixed', 'binary', 'data', ['application/octet-stream','application/x-text-mixed']],
 );
 plan tests => (-f $shared_mime_info_db ? 2 * keys %exp : 0) + 5;
 
 
 if (-f $shared_mime_info_db)
   {
+    my %e = %exp;
     for my $f (@f)
       {
 	my $r = $u->mime("$d/$f");
@@ -50,7 +54,11 @@ if (-f $shared_mime_info_db)
 	$ref = ref($exp{$f}[1]||'')||''; my $r1 = $r->[1]||'';
 	if ($ref eq 'Regexp') { cmp_ok($r1, '=~', $exp{$f}[1],     "$f: \t\t\tcharset=$r1"); }
 	else                  { cmp_ok($r1, 'eq', $exp{$f}[1]||'', "$f: \t\t\tcharset=$r1"); }
+
+	delete $e{$f};
       }
+    # any remainders?
+    diag("no files for \%exp: ", Dumper keys %e) if keys %e;
   }
 else
   {

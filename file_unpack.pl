@@ -30,7 +30,7 @@ my $list_only;
 my $list_perlish;
 my @mime_handler_dirs;
 
-my %opt = ( verbose => 1, maxfilesize => '100M', one_shot => 0);
+my %opt = ( verbose => 1, maxfilesize => '2.6G', one_shot => 0);
 
 push @mime_handler_dirs, "$FindBin::RealBin/helper" if -d "$FindBin::RealBin/helper";
 
@@ -128,10 +128,8 @@ if ($list_perlish)
 if ($list_only)
   {
     printf @$_ for $u->list();
-print Dumper POSIX::localeconv();
     exit 0;
   }
-
 
 if ($mime_only)
   {

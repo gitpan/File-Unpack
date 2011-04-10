@@ -78,11 +78,11 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.36
+Version 0.39
 
 =cut
 
-our $VERSION = '0.36';
+our $VERSION = '0.39';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
@@ -247,7 +247,7 @@ directly; more can easily be added as mime-type helper plugins.
 
 =head2 new
 
-my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '100M', verbose => 1);
+my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '2G', verbose => 1);
 
 Creates an unpacker instance. The parameter C<destdir> must be a writable location; all output 
 files and directories are placed inside this destdir. Subdirectories will be
@@ -267,8 +267,8 @@ As part of the epilog, a dummy file named "\" with an empty hash is added to the
 It should be ignored while parsing.
 Per default, the logfile is sent to STDOUT. 
 
-The parameter C<maxfilesize> is a safeguard against compressed sparse files. Such files could 
-easily fill up any available disk space when unpacked. Files hitting this limit will 
+The parameter C<maxfilesize> is a safeguard against compressed sparse files and test-files for archivers. 
+Such files could easily fill up any available disk space when unpacked. Files hitting this limit will 
 be silently truncated.  Check the logfile records or epilog to see if this has happened.
 BSD::Resource is used manipulate RLIMIT_FSIZE.
 
@@ -463,8 +463,9 @@ sub new
   $obj{verbose} = 1 unless defined $obj{verbose};
   $obj{destdir} ||= '.';
   $obj{logfile} ||= \*STDOUT;
-  $obj{maxfilesize} = '100M' unless defined $obj{maxfilesize};
+  $obj{maxfilesize} = $ENV{'FILE_UNPACK_MAXFILESIZE'}||'2.5G' unless defined $obj{maxfilesize};
   $obj{maxfilesize} = _bytes_unit($obj{maxfilesize});
+  $ENV{'FILE_UNPACK_MAXFILESIZE'} = $obj{maxfilesize};	# so that children see the same.
 
   mkpath($obj{destdir}); # abs_path is unreliable if destdir does not exist
   $obj{destdir} = Cwd::fast_abs_path($obj{destdir});
@@ -493,12 +494,20 @@ sub new
       eval 
         { 
 	  no strict; 
-	  # if RLIM_INFINITY is seen as an attempt to increase limits, we would fail. Ignore this.
-          BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, RLIM_INFINITY) or
-          BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, $obj{maxfilesize}) or
-	  warn "RLIMIT_FSIZE($obj{maxfilesize}) failed\n";
-	}
-       or carp "WARNING maxfilesize=$obj{maxfilesize} ignored:\n $@ $!\n Maybe package perl-BSD-Resource is not installed??\n\n";
+	  # helper/application=x-shellscript calls File::Unpack->new(), with defaults...
+	  my @have = BSD::Resource::getrlimit(RLIMIT_FSIZE);
+	  if ($have[0] == RLIM_INFINITY or $have[0] > $obj{maxfilesize})
+	    {
+	      # if RLIM_INFINITY is seen as an attempt to increase limits, we would fail. Ignore this.
+	      BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, RLIM_INFINITY) or
+	      BSD::Resource::setrlimit(RLIMIT_FSIZE, $obj{maxfilesize}, $obj{maxfilesize}) or
+	      warn "RLIMIT_FSIZE($obj{maxfilesize}), limit=$have failed\n";
+	    }
+	};
+      if ($@)
+        {
+          carp "WARNING maxfilesize=$obj{maxfilesize} ignored:\n $@ $!\n Maybe package perl-BSD-Resource is not installed??\n\n";
+        }
     }
 
   $obj{minfree}{factor} = 10    unless defined $obj{minfree}{factor};
@@ -702,6 +711,7 @@ sub unpack
       $self->{json} ||= JSON->new()->ascii(1);
 
       $self->{input} = $archive;
+      $self->{progress_tstamp} = $start_time;
       ($self->{input_dir}, $self->{input_file}) = ($1, $2) if $archive =~ m{^(.*)/([^/]*)$};
 
       my $s = $self->{json}->encode({destdir=>$self->{destdir}, pid=>$$, version=>$VERSION, 
@@ -728,8 +738,15 @@ sub unpack
 
   my @missing_unpacker;
 
+  if ($self->{progress_tstamp} + 10 < $start_time)
+    {
+      printf "T: %d files ...\n", $self->{file_count};
+      $self->{progress_tstamp} = $start_time;
+    }
+
   if (-d $archive)
     {
+      $self->_chmod_add($archive, 0700, 0500);
       if (opendir DIR, $archive)
         {
           my @f = sort grep { $_ ne '.' && $_ ne '..' } readdir DIR;
@@ -743,6 +760,7 @@ sub unpack
 	      ## ($inside_destdir means inside $self->{destdir}, actually)
 	      my $new_destdir = $destdir; $new_destdir .= "/$f" if -d $new_in;
 	      $self->unpack($new_in, $new_destdir) unless -l $new_in;
+              $self->{progress_tstamp} = time;
 	    }
 	}
       else
@@ -755,6 +773,7 @@ sub unpack
       if ($self->_not_excluded($subdir, $in_file) and
           !defined($self->{done}{$archive}))
 	{
+          $self->_chmod_add($archive, 0400);
 	  my $m = $self->mime($archive);
 	  my ($h, $more) = $self->find_mime_handler($m);
 	  my $data = { mime => $m->[0] };
@@ -786,6 +805,7 @@ sub unpack
 	        {
 	          $self->logf($archive => $data);
 		}
+	      $self->{file_count}++;
 	    }
 	  else
 	    {
@@ -822,6 +842,7 @@ sub unpack
 		  $data->{failed} = $h->{fmt_p};
 		  $data->{error} = $unpacked->{error};
 		  $self->logf($archive => $data);
+		  $self->{file_count}++;
 		}
 	      elsif ($unpacked eq "$destdir/$new_name" and 
 	             readlink($unpacked)||'' eq $archive)
@@ -850,6 +871,7 @@ sub unpack
 			  $self->logf($archive => $data);
 			}
 		    }
+		  $self->{file_count}++;
 		}
 	      else
 		{
@@ -861,6 +883,7 @@ sub unpack
 		      $data->{cmd} = $h->{fmt_p};
 		      $data->{unpacked} = $unpacked;
 		      $self->logf($archive => $data);
+		      $self->{file_count}++;
 		    }
 
 		  my $newdestdir = $unpacked;
@@ -877,6 +900,7 @@ sub unpack
 		    {
 		      $self->unpack($unpacked, $newdestdir);
 		    }
+                  $self->{progress_tstamp} = time;
 		}
 	    }
 	}
@@ -884,6 +908,7 @@ sub unpack
   else
     {
       $self->logf($archive => { "skipped" => "special file"});
+      $self->{file_count}++;
     }
 
   if (--$self->{recursion_level} == 0)
@@ -905,6 +930,17 @@ sub unpack
 
   # FIXME: should return nonzero if we had any unrecoverable errors.
   return $self->{error} ? 1 : 0;
+}
+
+sub _chmod_add
+{
+  my ($self, $file, @modes) = @_;
+  $file = $1 if $file =~ m{^(.*)$}m;
+  my $perm = (stat $file)[2] & 07777;
+  for my $m (@modes)
+    {
+      chmod($perm|$m, $file);	# may or may not succeed. Harmless here.
+    }
 }
 
 =head2 run
@@ -940,6 +976,8 @@ sub run
   my $opt;
      $opt = pop @cmd if ref $cmd[-1] eq 'HASH';
 
+  my $cmdname = $cmd[0][0]; $cmdname =~ s{^.*/}{};
+
   # run the command with 
   # - STDIN closed, unless you specify an { in => ... }
   # - STDERR and STDOUT printed prefixed with 'E: ', 'O: ' to STDOUT, 
@@ -947,8 +985,8 @@ sub run
   $opt->{in}  ||= \undef;
   $opt->{out} ||= $opt->{out_err};
   $opt->{err} ||= $opt->{out_err};
-  $opt->{out} ||= sub { print "O: @_\n"; };
-  $opt->{err} ||= sub { print "E: @_\n"; };
+  $opt->{out} ||= sub { print "O: ($cmdname) @_\n"; };
+  $opt->{err} ||= sub { print "E: ($cmdname) @_\n"; };
 
   my $has_i_redir = 0; 
   my $has_o_redir = 0;
@@ -1007,11 +1045,17 @@ sub run
       eval { $h->pump };
       if ($t && $t->is_expired)
         {
+	  $t->{has_fired}++;
 	  $opt->{prog}->($h, $opt);
 	  $t->start($opt->{every});
 	}
     }
   $h->finish;
+  $opt->{finished} = 1;
+
+  ## call it once more, to get the 100% printout, or somthing else...
+  $opt->{prog}->($h, $opt) if $t->{has_fired};
+
   return wantarray ? $h->full_results : $h->result;
 }
 
@@ -1136,7 +1180,12 @@ sub _run_mime_handler
       prog => sub 
 {
   $_[1]{tick}++; 
-  if (my $p = _children_fuser($_[1]{watch}, POSIX::getpid()))
+  my $name = $_[1]{watch}; $name =~ s{.*/}{};
+  if ($_[1]{finished})
+    {
+      printf "T: %s (%s,  done)\n", $name, _unit_bytes(-s $_[1]{watch},1);
+    }
+  elsif (my $p = _children_fuser($_[1]{watch}, POSIX::getpid()))
     {
       _fuser_offset($p);
       # we may get muliple process with multiple filedescriptors.
@@ -1159,12 +1208,11 @@ sub _run_mime_handler
       $_[1]{fuser} = $p;
       my $off = $p->{fastest_fd}{pos}||0;
       my $tot = $p->{fastest_fd}{size}||(-s $_[1]{watch})||1;
-      my $name = $_[1]{watch}; $name =~ s{.*/}{};
-      printf "T: %s offset=%s (%.1f%%)\n", $name, _unit_bytes($off,1), ($off*100)/$tot;
+      printf "T: %s (%s, %.1f%%)\n", $name, _unit_bytes($off,1), ($off*100)/$tot;
     }
   else
     {
-      print "T: $_[1]{watch} tick_tick $_[1]{tick}\n"; 
+      print "T: $name tick_tick $_[1]{tick}\n"; 
     }
 },
     });
@@ -1196,7 +1244,7 @@ sub _run_mime_handler
       closedir DIR;
       my $found0;
          $found0 = $1 if defined($found[0]) and $found[0] =~ m{^(.*)$}s;	# brute force untaint
-      print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found0\n" if $self->{verbose} > 1;
+      print STDERR "dot_dot_safeguard=$dot_dot_safeguard, i=$i, found=$found0\n" if $self->{verbose} > 2;
       unless (@found)
         {
 	  rmdir $jail_base;
@@ -1217,11 +1265,28 @@ sub _run_mime_handler
   # print STDERR "Hmmm, unpacker did not use destname: $args->{destfile}\n" if $self->{verbose} and !defined $wanted_name;
 
   print STDERR "Hmmm, unpacker saw destname: $args->{destfile}, but used destname: $wanted_name\n" 
-    if defined($wanted_name) and $wanted_name ne $args->{destfile};
+    if $self->{verbose} and defined($wanted_name) and $wanted_name ne $args->{destfile};
 
   $wanted_name = $args->{destfile} unless defined $wanted_name;
   my $wanted_path;
      $wanted_path = $destdir . "/" . $wanted_name if defined $wanted_name;
+
+  if (defined($wanted_name) and -e $wanted_path)
+    {
+      ## try to come up with a very similar name, just different suffix.
+      ## be compatible with path name shortening in unpack()
+      my $test_path = $wanted_path . '._';
+      for my $i ('', 1..9)
+        {
+	  # All our mime detectors work on file contents, rather than on suffixes.
+	  # Thus messing with the suffix should be okay here.
+	  unless (-e $test_path.$i)
+	    {
+              $wanted_path = $test_path.$i;
+	      last;
+	    }
+	}
+    }
 
   my $unpacked = $jail_base;
   if (defined($wanted_name) and !-e $wanted_path)
@@ -1752,11 +1817,11 @@ the average compression ratio of the archives.
 sub _bytes_unit
 {
   my ($text) = @_;
-  return $1*1024                if $text =~ m{([\d\.]+)k}i;
-  return $1*1024*1024           if $text =~ m{([\d\.]+)m}i;
-  return $1*1024*1024*1024      if $text =~ m{([\d\.]+)g}i;
-  return $1*1024*1024*1024*1024 if $text =~ m{([\d\.]+)t}i;
-  return $text;
+  return int($1*1024)                if $text =~ m{([\d\.]+)k}i;
+  return int($1*1024*1024)           if $text =~ m{([\d\.]+)m}i;
+  return int($1*1024*1024*1024)      if $text =~ m{([\d\.]+)g}i;
+  return int($1*1024*1024*1024*1024) if $text =~ m{([\d\.]+)t}i;
+  return int($text);
 }
 
 sub _unit_bytes
@@ -1990,6 +2055,12 @@ sub mime
       # {'File::MimeInfo::Magic' => 'application/x-lzma-compressed-tar'} -- no, that was suffix based!
       # {'File::LibMagic' => ['application/octet-stream; charset=binary','data']}
       $mime2 ||= eval { open my $fd,'<',\$in{buf}; File::MimeInfo::Magic::magic($fd); };
+      #
+      # File::LibMagic misreads monotone-0.99.1/monotone.info-1 as app/bin
+      # File::MimeInfo::Magic::magic() returns undef for that one.
+      # But perl itself does not agree:
+      $mime2 ||= 'application/x-text-mixed' if -T $in{file};
+
       $r[0] = $mime2 if $mime2;
     }
 

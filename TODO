@@ -1,3 +1,20 @@
+				jw, Mon Mar 28 21:01:45 CEST 2011
+
+lib/ldig/fs.pm had this on its sub get_file_mimetype(): "file -i -b %s"
+# file returns things like:
+# 'text/plain; charset=us-ascii'
+# 'application/x-tar, POSIX'
+# 'text/x-c'
+# we truncate at the , or ;
+#
+# If $fname ends in '|' we assume it is a command like 'gzip -dc file.gz|'
+#
+# vim-7.0-extra.tar.bz2/vim70/csdpmi4b.zip~ldig/BIN/CWSDPMI.DOC
+# is a text file, but file says: application/x-shockwave-flash
+# vim70/runtime/macros/maze/poster: message/news\0118bit
+#
+# FIXME: DELTA rpms have DLT3 magic after unrpm. How do we handle this?
+
 				jw, Wed Dec 15 20:31:41 CET 2010
 
 Browse through this list of formats
