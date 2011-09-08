@@ -11,6 +11,8 @@
 # 2010-09-01, jw -- added --list
 # 2011-01-03, jw -- allow multiple arguments. Improved -m
 # 2011-03-08, jw -- fixed usage of -l, added -p.
+# 2011-04-21, jw -- better format error messages, and stop after error.
+# 2011-05-12, jw -- added -n for no_op
 
 use Data::Dumper;
 $Data::Dumper::Terse = 1;
@@ -30,26 +32,30 @@ my $list_only;
 my $list_perlish;
 my @mime_handler_dirs;
 
-my %opt = ( verbose => 1, maxfilesize => '2.6G', one_shot => 0);
+my %opt = ( verbose => 1, maxfilesize => '2.6G', one_shot => 0, no_op => 0, world_readable => 0, log_fullpath => 0);
 
 push @mime_handler_dirs, "$FindBin::RealBin/helper" if -d "$FindBin::RealBin/helper";
 
 GetOptions(
-	"verbose|v+"   => \$opt{verbose},
-	"version|V"    => sub { print "$version\n"; exit },
-	"quiet"        => sub { $opt{verbose} = 0; },
-	"destdir|C=s"  => \$opt{destdir},
-	"exclude|E=s"  => \@exclude,
-	"exclude-vcs!" => \$exclude_vcs,
-	"vcs|include-vcs!" => sub { $exclude_vcs = !$_[1]; },
-	"help|?"       => \$help,
-	"logfile|L=s"  => \$opt{logfile},
-	"one_shot|1"   => \$opt{one_shot},
-	"mimetype|m+"  => \$mime_only,
-	"list-helpers|l+" => \$list_only,
-	"print-helpers|p+" => \$list_perlish,
-	"unpack-include-dir|I|u=s" => \@mime_handler_dirs,
-	"maxfilesize=s"=> \$opt{maxfilesize},
+	"verbose|v+"   	=> \$opt{verbose},
+	"version|V"    	=> sub { print "$version\n"; exit },
+	"quiet"        	=> sub { $opt{verbose} = 0; },
+	"destdir|D|C=s" => \$opt{destdir},
+	"exclude|E=s"  	=> \@exclude,
+	"exclude-vcs!" 	=> \$exclude_vcs,
+	"vcs|include-vcs!" 	=> sub { $exclude_vcs = !$_[1]; },
+	"help|?"       		=> \$help,
+	"logfile|L=s"  		=> \$opt{logfile},
+	"fullpath-log|F" 	=> \$opt{log_fullpath},
+	"one-shot|one_shot|1"   => \$opt{one_shot},
+	"mimetype|m+"  		=> \$mime_only,
+	"no_op|no-op|noop|n+" 	=> \$opt{no_op},
+	"list-helpers|l+" 	=> \$list_only,
+	"print-helpers|p+" 	=> \$list_perlish,
+	"params|P=s"		=> \%{$opt{log_params}},
+	"maxfilesize=s"		=> \$opt{maxfilesize},
+	"use-mime-handler-dir|I|u=s" => \@mime_handler_dirs,
+	"world-readable|world_readable|R+" => \$opt{world_readable},
 ) or $help++;
 
 @mime_handler_dirs = split(/,/,join(',',@mime_handler_dirs));
@@ -67,7 +73,8 @@ Valid options are:
  -v	Be more verbose. Default: $opt{verbose}.
  -q     Be quiet, not verbose.
 
- -C --destdir dir
+ -C 
+ -D --destdir dir
         Directory, where to place the output file or directory.
 	A subdirectory is created, if there are more than one files to unpack.
 	Default: current dir.
@@ -75,6 +82,10 @@ Valid options are:
  -E --exclude glob.pat
  	Specify files and directories that are not unpacked.
 	This option can be specified multiple times.
+
+ -F --fullpath-log
+ 	Always use full path names in logfile. Default: 
+	unpacked path names are written relative to destdir.
 
  --exclude-vcs	--no-exclude-vcs 
  --include-vcs  --no-include-vcs --vcs --no-vcs
@@ -99,6 +110,9 @@ Valid options are:
  	List all builtin mime-handlers and all external mime-helpers as 
 	a nested perl datastructure.
 
+ -P --param KEY=VALUE
+ 	Place additional params into the log file.
+
  --maxfilesize size
         Truncate an unpacked file, if it gets larger than the specified size.
 	Size can be specified as bytes (plain integer), kilo-, mega-, giga-, or 
@@ -109,13 +123,19 @@ Valid options are:
 	similar to '/usr/bin/file -i', unless -q or -v are given.
 	With -v, the unpacker command is also printed.
 
+ -R --world-readable
+ 	Make the unpacked tree world readable. Default: user readable.
+
+ -n --no-op
+ 	Do not unpack. Print the first unpack command only.
+
  -u --use-mime-handler-dir dir
  	Include an additonal directory of mime handlers.
 	Useable multiple times. Later additions take precedence.
 
 }) if $help;
 
-$opt{logfile} ||= '/dev/null' if $list_only or $list_perlish or $mime_only;
+$opt{logfile} ||= '/dev/null' if $list_only or $list_perlish or $mime_only or $opt{no_op};
 my $u = File::Unpack->new(%opt);
 my $list = $u->mime_handler_dir(@mime_handler_dirs);
 
@@ -151,18 +171,18 @@ if ($mime_only)
 	  {
 	    print "$m->[0]\n";
 	  }
-        $archive = shift
+        $archive = shift;
       }
     exit 0;
   }
 
 $u->exclude(vcs => $exclude_vcs);
 $u->exclude(add => \@exclude) if @exclude;
-while (defined $archive)
+while (defined $archive and !$u->{error}) 
   {
     $u->unpack($archive);
-    print Dumper $u->{error} if $u->{error};
-    $archive = shift
+    map { print STDERR "ERROR: $_\n" } @{$u->{error}} if $u->{error};
+    $archive = shift;
   }
 
 # delete $u->{json};

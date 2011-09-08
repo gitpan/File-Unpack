@@ -1,3 +1,9 @@
+				jw, Wed May  4 11:58:27 CEST 2011
+
+debug 
+file_unpack /space/legaldb_nfs/auto-co/api.opensuse.org/mozilla\:Factory/js%1.8.5%r3/
+this pulls 1.7gb incore. why?
+
 				jw, Mon Mar 28 21:01:45 CEST 2011
 
 lib/ldig/fs.pm had this on its sub get_file_mimetype(): "file -i -b %s"

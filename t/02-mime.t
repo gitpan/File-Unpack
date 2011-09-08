@@ -36,6 +36,10 @@ closedir DIR;
 
   ## File::LibMagic says application/octet-stream here:
   'monotone.info' => ['application/x-text-mixed', 'binary', 'data', ['application/octet-stream','application/x-text-mixed']],
+
+  ## this is actually plain text, but we are fooled by its apparent magic.
+  'pdftex-a.txt' =>  ['application/pdf', 'utf-8', 'PDF document, version 1.4' ]
+  #
 );
 plan tests => (-f $shared_mime_info_db ? 2 * keys %exp : 0) + 5;
 

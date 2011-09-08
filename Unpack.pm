@@ -78,11 +78,10 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.39
-
+Version 0.46
 =cut
 
-our $VERSION = '0.39';
+our $VERSION = '0.46';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
@@ -247,7 +246,8 @@ directly; more can easily be added as mime-type helper plugins.
 
 =head2 new
 
-my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '2G', verbose => 1);
+my $u = new(destdir => '.', logfile => \*STDOUT, maxfilesize => '2G', verbose => 1,
+            world_readable => 0, one_shot => 0, no_op => 0, log_params => {});
 
 Creates an unpacker instance. The parameter C<destdir> must be a writable location; all output 
 files and directories are placed inside this destdir. Subdirectories will be
@@ -276,6 +276,12 @@ The parameter C<one_shot> can optionally be set to non-zero, to limit unpacking 
 Unpacking of well known compressed archives like e.g. '.tar.bz2' is considered one step only. If uncompressing 
 is considered an extra step depends on the configured mime helpers.
 
+The parameter C<no_op> causes unpack() to only print one shell command to STDOUT and exit.
+This implies one_shot=1.
+
+The parameter C<world_readable> causes unpack() change all directories to 0755, and all files to 444.
+Otherwise 0700 and 0400 (user readable) is asserted.
+
 =head2 exclude
 
 exclude(add => ['.svn', '*.orig' ], del => '.svn', force => 1)
@@ -292,6 +298,8 @@ having the obvious meaning.
 Otherwise C<exclude> always returns the list as an array ref.
 
 Symbolic links are always excluded.
+If exclude patterns were effective, or if symlinks were encountered during unpack(), the logfile contains an 
+additional 'skipped' keyword with statistics.
 
 =cut
 
@@ -370,16 +378,20 @@ sub exclude
 
 The C<log> method is used by C<unpack> to send text to the logfile.
 The C<logf> method takes a filename and a hash, and logs a JSON formatted line.
+The trailing newline character of a line is delayed; it is printed by the next call to 
+C<log> or C<logf>. In case of C<logf>, a comma is emitted before the newline 
+from the second call onward.
 
 =end private
 
 =cut
 sub log
 {
-  my $self = shift;
+  my ($self, $text) = @_;
   if (my $fp = $self->{lfp})
     {
-      print $fp @_;
+      my $r = $fp->syswrite($text);
+      die "$r=log($self->{logfile}): write failed: $text\n" if $r != length($text);
       $self->{lfp_printed}++;
     }
 }
@@ -387,17 +399,20 @@ sub log
 sub logf
 {
   my ($self,$file,$hash,$suff) = @_;
-  $suff = ",\n" unless defined $suff;
+  $suff = "" unless defined $suff;
   my $json = $self->{json} ||= JSON->new()->ascii(1);
+  $file =~ s{^\Q$self->{destdir}\E/}{} unless $self->{log_fullpath};
   if (my $fp = $self->{lfp})
     {
       $self->log(qq[{ "oops": "logf used before prolog??",\n"unpacked_files":{\n])
-        unless tell $fp; # }}
+        unless $self->{lfp_printed}; # sysseek($fp, 0, 1); # }}		there is no systell() ...
       my $str = $json->encode({$file => $hash});
       $str =~ s{^\{}{}s;
       $str =~ s{\}$}{}s;
+      my $pre = " ";
+      $pre = ",\n " if $self->{logf_continuation}++;
       die "logf failed to encode newline char: $str\n" if $str =~ m{(?:\n|\r)};
-      $self->log(" $str$suff");
+      $self->log("$pre$str$suff");
     }
 }
 
@@ -474,8 +489,10 @@ sub new
   # used in unpack() to jail mime_handlers deep inside destdir:
   $obj{dot_dot_safeguard} = 20 unless defined $obj{dot_dot_safeguard};
   $obj{jail_chmod0} ||= 0;
-  # used in unpack, blocks recursion after archive unpacking
-  $obj{one_shot} ||= 0;
+  # used in unpack, print only:
+  $obj{no_op} ||= 0;
+  # used in unpack, blocks recursion after archive unpacking:
+  $obj{one_shot} ||= $obj{no_op};
 
   carp "We are running as root: Malicious archives may clobber your filesystem.\n" unless $>;
 
@@ -487,7 +504,18 @@ sub new
     {
       $obj{lfp} = $obj{logfile};
     }
+  # make $obj{lfp} unbuffered, so that other processes can read line by line...
+  $obj{lfp}->autoflush(1); 
   $obj{lfp_printed} = 0;
+
+  $obj{readable_file_modes} = [ 0400 ];
+  $obj{readable_dir_modes}  = [ 0700, 0500 ];
+
+  if ($obj{world_readable})
+    {
+      unshift @{$obj{readable_file_modes}}, 0444;
+      unshift @{$obj{readable_dir_modes}},  0755;
+    }
 
   if ($obj{maxfilesize})
     {
@@ -549,12 +577,17 @@ sub new
 sub DESTROY
 {
   my $self = shift;
-  if ($self->{lfp} and $self->{lfp_printed})
+  if ($self->{lfp})
     {
+      $self->log(sprintf(qq[{"pid":"%d", "unpacked":{], $$)) unless $self->{lfp_printed};
+      my $r = $self->{recursion_level}||0;
+
       # this should never happen. 
       # always delete $self->{lfp} manually, when done.
       ## {{
-      $self->log(qq[\n}, "error":"unexpected destructor seen; lfp_printed=$self->{lfp_printed}; recursion_level=$self->{recursion_level}"};\n]);
+      my $msg = "unexpected destructor seen";
+      $msg = join('; ', @{$self->{error}}) if $self->{error};
+      $self->log(qq[\n}, "error":"(l=$self->{lfp_printed},r=$r): $msg"}\n]);
       close $self->{lfp} if $self->{lfp} ne $self->{logfile};
       delete $self->{lfp};
       delete $self->{lfp_printed};
@@ -687,12 +720,6 @@ sub unpack
 
   $destdir = $1 if $destdir =~ m{^(.*)$}s;	# brute force untaint
 
-  unless (-e $archive)
-    {
-      push @{$self->{error}}, "unpack('$archive'): no such file or directory";
-      return 1;
-    }
-
   if (($self->{recursion_level}||0) > $RECURSION_LIMIT)
     {
       push @{$self->{error}}, "unpack('$archive','$destdir'): recursion limit $RECURSION_LIMIT";
@@ -714,13 +741,25 @@ sub unpack
       $self->{progress_tstamp} = $start_time;
       ($self->{input_dir}, $self->{input_file}) = ($1, $2) if $archive =~ m{^(.*)/([^/]*)$};
 
-      my $s = $self->{json}->encode({destdir=>$self->{destdir}, pid=>$$, version=>$VERSION, 
-		    input => $archive, start => scalar localtime});
+      # logfile prolog
+      my $prolog = {destdir=>$self->{destdir}, fu=>$VERSION, pid=>$$, input => $archive, start => scalar localtime};
+      $prolog->{params} = $self->{log_params} if keys %{$self->{log_params}};
+      my $s = $self->{json}->encode($prolog);
       $s =~ s@}$@, "unpacked":{\n@;
       $self->log($s);
     }
 
-  die "internal error" unless $self->{input_dir};
+  unless (-e $archive)
+    {
+      push @{$self->{error}}, "unpack('$archive'): no such file or directory";
+      return 1;
+    }
+
+  unless ($self->{input_dir})
+    {
+      push @{$self->{error}}, "unpack('$archive'); internal error: no {input_dir}";
+      return 1;
+    }
 
   my ($in_dir, $in_file) = ('/', '');
      ($in_dir, $in_file) = ($1, $2) if $archive =~ m{^(.*/)([^/]*)$};
@@ -740,13 +779,13 @@ sub unpack
 
   if ($self->{progress_tstamp} + 10 < $start_time)
     {
-      printf "T: %d files ...\n", $self->{file_count};
+      printf "T: %d files ...\n", $self->{file_count}||0;
       $self->{progress_tstamp} = $start_time;
     }
 
   if (-d $archive)
     {
-      $self->_chmod_add($archive, 0700, 0500);
+      $self->_chmod_add($archive, @{$self->{readable_dir_modes}});
       if (opendir DIR, $archive)
         {
           my @f = sort grep { $_ ne '.' && $_ ne '..' } readdir DIR;
@@ -754,12 +793,23 @@ sub unpack
 	  print STDERR "dir = @f\n" if $self->{verbose} > 1;
 	  for my $f (@f) 
 	    {
-	      next if $self->{exclude}{re} && $f =~ m{$self->{exclude}{re}};
+	      if ($self->{exclude}{re} && $f =~ m{$self->{exclude}{re}})
+                {
+                  $self->{skipped}{exclude}++;
+                }
 	      my $new_in =  "$archive/$f";
 	      ## if $archive is $inside_destdir, then $archive is normally indentical to $destdir.
 	      ## ($inside_destdir means inside $self->{destdir}, actually)
 	      my $new_destdir = $destdir; $new_destdir .= "/$f" if -d $new_in;
-	      $self->unpack($new_in, $new_destdir) unless -l $new_in;
+              if (-l $new_in)
+                {
+                  print STDERR "symlink $new_in: skipped\n" if $self->{verbose} > 1;
+                  $self->{skipped}{symlink}++;
+                }
+	      else
+                { 
+                  $self->unpack($new_in, $new_destdir);
+                }
               $self->{progress_tstamp} = time;
 	    }
 	}
@@ -773,7 +823,8 @@ sub unpack
       if ($self->_not_excluded($subdir, $in_file) and
           !defined($self->{done}{$archive}))
 	{
-          $self->_chmod_add($archive, 0400);
+          $self->_chmod_add($archive, @{$self->{readable_file_modes}});
+
 	  my $m = $self->mime($archive);
 	  my ($h, $more) = $self->find_mime_handler($m);
 	  my $data = { mime => $m->[0] };
@@ -787,7 +838,7 @@ sub unpack
 	    {
 	      unless ($archive =~ m{^\Q$self->{destdir}\E/})
 		{
-		  mkpath($destdir);
+		  mkpath($destdir) unless $self->{no_op};
 		  my $destdir_in_file;
 		     $destdir_in_file = $1 if "$destdir/$in_file" =~ m{^(.*)$}s; # brute force untaint
 
@@ -809,7 +860,7 @@ sub unpack
 	    }
 	  else
 	    {
-	      mkpath($destdir);
+	      mkpath($destdir) unless $self->{no_op};
 	      $self->{configdir} = $self->_prep_configdir() unless exists $self->{configdir};
 	      my $new_name = $in_file;
 	      
@@ -837,6 +888,7 @@ sub unpack
 	      my $unpacked = $self->_run_mime_handler($h, $archive, $new_name, $destdir, 
 	      				$m->[0], $m->[2], $self->{configdir});
 
+	      return 0 if $self->{no_op};
 	      if (ref $unpacked)
 	        {
 		  $data->{failed} = $h->{fmt_p};
@@ -914,10 +966,16 @@ sub unpack
   if (--$self->{recursion_level} == 0)
     {
       my $epilog = {end => scalar localtime, sec => time-$start_time };
+      $epilog->{skipped} = $self->{skipped} if $self->{skipped};
+      $epilog->{error}   = $self->{error}   if $self->{error};		# just in case some errors were non-fatal.
       $epilog->{missing_unpacker} = \@missing_unpacker if @missing_unpacker;
       my $s = $self->{json}->encode($epilog);
-      # a dummy entry at the end, to compensate for the trailing comma
-      $s =~ s@^{@"/":{}},@;
+
+      ## No longer needed since 0.40:
+      ## a dummy entry at the end, to compensate for the trailing comma
+      # $s =~ s@^{@"/":{}},@;
+
+      $s =~ s@^{@\n},@;
       $self->log($s . "\n");
 
       if ($self->{lfp} ne $self->{logfile})
@@ -932,6 +990,8 @@ sub unpack
   return $self->{error} ? 1 : 0;
 }
 
+# Try a few modes to add to the current permission bits.
+# The first mode that succeeds ends the list.
 sub _chmod_add
 {
   my ($self, $file, @modes) = @_;
@@ -939,7 +999,7 @@ sub _chmod_add
   my $perm = (stat $file)[2] & 07777;
   for my $m (@modes)
     {
-      chmod($perm|$m, $file);	# may or may not succeed. Harmless here.
+      last if chmod($perm|$m, $file);	# may or may not succeed. Harmless here.
     }
 }
 
@@ -1128,10 +1188,15 @@ sub _run_mime_handler
   my $dot_dot_safeguard = $self->{dot_dot_safeguard}||0;
   $dot_dot_safeguard = 2 if $dot_dot_safeguard < 2;
 
-  mkpath($destdir);
-  my $jail_base = File::Temp::tempdir($TMPDIR_TEMPL, DIR => $destdir);
-  my $jail = $jail_base . ("/_" x $dot_dot_safeguard);
-  mkpath($jail);
+  my $jail_base = '/dev/null';
+  my $jail = $jail_base;
+  unless ($self->{no_op})
+    {
+      mkpath($destdir);
+      $jail_base = File::Temp::tempdir($TMPDIR_TEMPL, DIR => $destdir);
+      $jail = $jail_base . ("/_" x $dot_dot_safeguard);
+      mkpath($jail);
+    }
 
   my $args = 
     {
@@ -1161,6 +1226,13 @@ sub _run_mime_handler
 	  push @cmd, _subst_args($a, $args);
 	}
     }
+
+  if ($self->{no_op})
+    {
+      print fmt_run_shellcmd(@cmd) . "\n";
+      return undef;
+    }
+
   print STDERR "_run_mime_handler in $destdir: " . fmt_run_shellcmd(@cmd) . "\n" if $self->{verbose} > 1;
 
   my $cwd = getcwd() or carp "cannot fetch initial working directory, getcwd: $!";
@@ -1219,14 +1291,18 @@ sub _run_mime_handler
     
   chmod 0700, $jail_base if $self->{jail_chmod0};
   chdir $cwd or die "cannot chdir back to cwd: chdir($cwd): $!";
+  my @nonzero = grep { $_ } @r;
 
   # TODO: handle failure
   # - remove all, 
   # - retry with a fallback handler , if any.
-  print STDERR "Non-Zero return value: $r[0]\n" if $r[0];
+  print STDERR "Non-Zero return value: $r[0]\n" if $nonzero[0];
 
-  # FIXME: we should not die here
-  die "run() failed:\n " . fmt_run_shellcmd(@cmd) . "\n" . Dumper \@r if $r[1];
+  # FIXME: fallback handler not implemented
+  # t/data/pdftxt-a.txt is really plain/text altthough it begins with "PDF-1.4..." and
+  # thus fools the mime-type tests.
+  # should run other handlers, and finally 'strings -' as a trivial fallback.
+  return { error => "run() returned nonzero:\n " . Dumper \@r } if $nonzero[0];
 
   # loop through all _: if it only contains one item , replace it with this item,
   # be it a file or dir. This uses $jail_tmp, an unused pathname.
@@ -1264,8 +1340,9 @@ sub _run_mime_handler
   ## this message is broken.
   # print STDERR "Hmmm, unpacker did not use destname: $args->{destfile}\n" if $self->{verbose} and !defined $wanted_name;
 
+  # say nothing, if $args->{destname} is equal to or a prefix of $wanted_name.
   print STDERR "Hmmm, unpacker saw destname: $args->{destfile}, but used destname: $wanted_name\n" 
-    if $self->{verbose} and defined($wanted_name) and $wanted_name ne $args->{destfile};
+    if $self->{verbose} and defined($wanted_name) and $wanted_name !~ m{^\Q$args->{destfile}};
 
   $wanted_name = $args->{destfile} unless defined $wanted_name;
   my $wanted_path;

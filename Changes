@@ -1,4 +1,29 @@
-Revision history for File-Unpack
+0.46	jw, Wed Sep  7 16:08:45 CEST 2011
+    	- No more uninitialized value in printf line 780.
+        - Incompatible change: unpacked filenames are now relative to destdir
+	  unless -F or ->new(log_fullname => 1)
+	- New parameter -P or ->new(log_params => {}) to feed params into the 
+	  logfile.
+
+0.45	jw, Fri May 27 13:10:16 CEST 2011
+	Added option world_readable=>1, to assert 0755/0444 modes for dirs/files.
+
+0.44	jw, Fri May 20 12:47:27 CEST 2011
+	converted log to use syswrite() attempt to catch write errors...
+
+0.43 	jw, Thu May 12 13:22:02 CEST 2011
+	Implemented no_op option in _run_mime_handler().
+
+0.42 	jw, Thu Apr 21 15:56:27 CEST 2011
+	Unexpected DESTROY handler closes json logfile properly with an {error} message, if any.
+
+0.41	jw, Mon Apr 18 14:55:45 CEST 2011
+	Statistics in logfile about skipped (exclude and symlink) files.
+
+0.40	jw, Fri Apr 15 15:31:54 CEST 2011
+	less verbose with differing destnames...
+	Survive crashes in run(). 
+	logfile json syntax preserved, even when terminating error message. No more trailing dummy "/":{}
 
 0.39    jw, Wed Apr  6 18:25:26 CEST 2011
 	Try /._\d?/ name suffixes on collisions to avoid _fu_* directories if possible.

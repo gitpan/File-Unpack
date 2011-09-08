@@ -19,5 +19,5 @@ open IN, "<", "$testdir/log";
 my $log = JSON::from_json(join '', <IN>);
 close IN;
 ok(ref($log) eq 'HASH', "logfile is valid JSON");
-ok(exists($log->{unpacked}{'/'}), "Dummy file seen");
+ok(!exists($log->{unpacked}{'/'}), "Dummy not file seen");
 ok(length($log->{end}), "end timstamp file seen");
