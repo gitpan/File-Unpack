@@ -78,10 +78,10 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.46
+Version 0.47
 =cut
 
-our $VERSION = '0.46';
+our $VERSION = '0.47';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
@@ -390,8 +390,13 @@ sub log
   my ($self, $text) = @_;
   if (my $fp = $self->{lfp})
     {
-      my $r = $fp->syswrite($text);
-      die "$r=log($self->{logfile}): write failed: $text\n" if $r != length($text);
+      my $oldpos = $fp->tell;
+      $fp->write($text) or die "log($self->{logfile}): write failed: $!\n";
+      my $r = $fp->tell - $oldpos;
+
+      ## We do not expect any multibyte utf8 issues in here. It is plain 7-bit JSON.
+      ## E.g. /dev/null is not seekable. Be forgiving.
+      die "$oldpos,$r=log($self->{logfile}): write failed: $text\n" if $r and $r != length($text);
       $self->{lfp_printed}++;
     }
 }

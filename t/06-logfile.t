@@ -7,7 +7,7 @@ use File::Unpack;
 use File::Temp;
 use JSON;
 
-plan tests => 4;
+# plan tests => 5;
 
 my $testdir = File::Temp::tempdir("FU_06_XXXXX", TMPDIR => 1, CLEANUP => 1);
 
@@ -21,3 +21,21 @@ close IN;
 ok(ref($log) eq 'HASH', "logfile is valid JSON");
 ok(!exists($log->{unpacked}{'/'}), "Dummy not file seen");
 ok(length($log->{end}), "end timstamp file seen");
+
+my $log_scalar;
+my $testdir2 = File::Temp::tempdir("FU_06_XXXXX", TMPDIR => 1, CLEANUP => 1);
+$u = File::Unpack->new(destdir => $testdir2, verbose => 0, logfile => \$log_scalar);
+$u->exclude(vcs => 1, add => ['data']);
+$u->unpack("t");
+my $log2 = JSON::from_json($log_scalar);
+ok(ref($log2) eq 'HASH', "scalar log is valid JSON");
+
+my $filecount = 0;
+for my $f (keys %{$log2->{unpacked}})
+  {
+    ok($log2->{unpacked}{$f}{mime} =~ m{^text/}, "$f: $log2->{unpacked}{$f}{mime} matches text/*");
+    $filecount++
+  }
+ok($filecount > 10, "more than 10 unpacked files: $filecount");
+
+done_testing();

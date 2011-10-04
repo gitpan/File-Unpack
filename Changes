@@ -1,3 +1,7 @@
+0.47	jw, Wed Oct  5 00:58:11 CEST 2011
+	- fixed rt#70885, new(logfile => \$log); now works as advertised.
+	- somewhat experimental code: we now assert there is no utf8 in the log.
+
 0.46	jw, Wed Sep  7 16:08:45 CEST 2011
     	- No more uninitialized value in printf line 780.
         - Incompatible change: unpacked filenames are now relative to destdir
