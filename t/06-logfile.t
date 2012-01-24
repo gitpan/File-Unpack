@@ -1,6 +1,7 @@
 #!perl -T
 
-use Test::More;
+# number of tests is variable here. using no_plan, as this works on both SLE11_SP2 and 12.1
+use Test::More qw(no_plan);
 use FindBin;
 BEGIN { unshift @INC, "$1/../blib/lib" if $FindBin::Bin =~ m{(.*)} };
 use File::Unpack;
@@ -38,4 +39,5 @@ for my $f (keys %{$log2->{unpacked}})
   }
 ok($filecount > 10, "more than 10 unpacked files: $filecount");
 
-done_testing();
+# done_testing does not exist in SLE11_SP2
+# done_testing();

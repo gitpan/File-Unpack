@@ -78,10 +78,10 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.47
+Version 0.50
 =cut
 
-our $VERSION = '0.47';
+our $VERSION = '0.50';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
@@ -364,7 +364,7 @@ sub exclude
 
   $opt{empty_dir} = $opt{empty_file} = $opt{empty} if defined $opt{empty};
 
-  for my $o qw(empty_file empty_dir force)
+  for my $o (qw(empty_file empty_dir force))
     {
       $self->{exclude}{$o} = $opt{$o} if defined $opt{$o};
     }
@@ -390,9 +390,9 @@ sub log
   my ($self, $text) = @_;
   if (my $fp = $self->{lfp})
     {
-      my $oldpos = $fp->tell;
+      my $oldpos = eval { $fp->tell; };		# old perl at SLES11 has no IO::Handle::tell()
       $fp->write($text) or die "log($self->{logfile}): write failed: $!\n";
-      my $r = $fp->tell - $oldpos;
+      my $r = eval { $fp->tell - $oldpos; };
 
       ## We do not expect any multibyte utf8 issues in here. It is plain 7-bit JSON.
       ## E.g. /dev/null is not seekable. Be forgiving.
@@ -1062,7 +1062,6 @@ sub run
   ## A command that pipes somewhere else, has_o_redir outbound through the pipe.
   ## A command that is piped into, has_i_redir inbound from the pipe.
   my @run = ();
-  push @run, debug => $opt->{debug} if $opt->{debug};
 
 
   for my $c (@cmd)
@@ -1100,6 +1099,7 @@ sub run
   push @run, $t if $t;
 
   $run[0][0] = $1 if $run[0][0] =~ m{^(.*)$}s;
+  push @run, debug => $opt->{debug} if $opt->{debug};
   my $h = eval { IPC::Run::start @run; };
   return wantarray ? (undef, $@) : undef unless $h;
 
@@ -1943,7 +1943,7 @@ sub minfree
   my $self = shift;
   my %opt = @_;
 
-  for my $i qw(factor bytes percent)
+  for my $i (qw(factor bytes percent))
     {
       $self->{minfree}{$i} = $opt{$i} if defined $opt{$i};
       $self->{minfree}{$i} ||= 0;
@@ -2051,7 +2051,7 @@ sub mime
       # application/x-iso9660-image is reported as application/octet-stream if the buffer is short.
       # iso images usually start with 0x8000 bytes of all '\0'.
       print STDERR "mime: readahead buffer $UNCOMP_BUFSZ too short\n" if $self->{verbose} > 2;
-      if (defined $in{file})
+      if (defined $in{file} and -f $in{file})
         {
           print STDERR "mime: reopening $in{file}\n" if $self->{verbose} > 1;
           $mime1 = $flm->checktype_filename($in{file});
@@ -2237,7 +2237,13 @@ sub mime
 
       # use Data::Dumper; printf STDERR "calling mime with buf=%d bytes, compname=$compname\n", length($uncomp_buf);
 
-      my $m2 = $self->mime(buf => $uncomp_buf, file => "$in{file}+$compname", uncomp => \$next_uncomp_buf, recursion => 1);
+      #########
+      ## FIXME: adding +$compname to the filename prevents reopening in mime, if needed.
+      ## Why did I do this in the first place?
+      # my $m2 = $self->mime(buf => $uncomp_buf, file => "$in{file}+$compname", uncomp => \$next_uncomp_buf, recursion => 1);
+      #########
+
+      my $m2 = $self->mime(buf => $uncomp_buf, file => $in{file}, uncomp => \$next_uncomp_buf, recursion => 1);
       my ($a,$xminus,$b) = ($m2->[0] =~ m{^(.*)/(x-)?(.*)$});
       if ($a eq 'application')
         {

@@ -1,3 +1,13 @@
+0.50    jw, Tue Jan 24 18:43:01 CET 2012
+	- made testsuite survive on SLE11_SP1, put IO::Handle::tell() inside eval to survive
+	  SLES11_SP1
+
+0.49	jw, Mon Jan 23 19:12:44 CET 2012
+	- made survive ntop, in{file} must not modify, so that reopen inside mime() works.
+
+0.48	jw, Tue Nov 29 11:23:30 UTC 2011
+	- fixed Use of qw(...) as parentheses. This is deprecated with newer perl.
+
 0.47	jw, Wed Oct  5 00:58:11 CEST 2011
 	- fixed rt#70885, new(logfile => \$log); now works as advertised.
 	- somewhat experimental code: we now assert there is no utf8 in the log.

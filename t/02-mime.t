@@ -17,13 +17,16 @@ opendir DIR, $d or diag("where is my test data?");
 my @f = sort grep { !/^\./ } readdir DIR;
 closedir DIR;
 
+my $sample = 'monotone.info';	# one of the below files, without regexps, for further tests.
 %exp = 
 (
   ## 0.22 used to say application/x-lzma, but true binary data. Not even compressed.
   'lxknf09SCc0.bin' => [ 'application/octet-stream', qr{^(binary|)$} ], 
   ## actually 'application/x-desktop' or 'text/x-desktop'
   'Desktop.directory' => [ 'text/plain', 'utf-8', 'UTF-8 Unicode text' ],
-  'xterm-snippet.desktop' => ['text/x-desktop','utf-8','UTF-8 Unicode Pascal program text',['text/x-pascal','application/x-desktop']],
+
+  ## text/plain seen on 12.1, was text/x-desktop before
+  'xterm-snippet.desktop' => [qr{^text/(plain|x\-desktop)$},'utf-8','UTF-8 Unicode Pascal program text',['text/x-pascal','application/x-desktop']],
   'IPA-snippet.pfa' => [ 'text/x-font-type1', qr{^(us-ascii|)$}, 'PostScript Type 1 font text (OmegaSerifIPA 001.000)', [ 'text/plain', 'application/x-font-type1' ] ],
   'Times-Roman-snippet.afm' => [qr{^(application|text)/x-font-sunos-news$}, 'us-ascii','ASCII font metrics',['text/x-fortran','application/x-font-sunos-news']], 
   ## actually 'text/x-xslfo'
@@ -69,8 +72,8 @@ else
     diag("shared mime info not tested: $shared_mime_info_db not found");
   }
 
-cmp_ok($u->mime( file => "$d/$f[0]" )->[0], 'eq', $exp{$f[0]}[0], "mime(file => ..)");
-cmp_ok($u->mime({file => "$d/$f[0]"})->[0], 'eq', $exp{$f[0]}[0], "mime({file => ..})");
+cmp_ok($u->mime( file => "$d/$sample" )->[0], 'eq', $exp{$sample}[0], "mime(file => ..)");
+cmp_ok($u->mime({file => "$d/$sample"})->[0], 'eq', $exp{$sample}[0], "mime({file => ..})");
 cmp_ok($u->mime(file => 'file_does_not_exist')->[0], 'eq', 'x-system/x-error', "file not found");
 
 my $buf = "\x25\x50\x44\x46\x2d\x31\x2e\x34\x0a\x25\xc3\xa4\xc3\xbc\xc3\xb6" .

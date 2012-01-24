@@ -183,6 +183,7 @@ while (defined $archive and !$u->{error})
     $u->unpack($archive);
     map { print STDERR "ERROR: $_\n" } @{$u->{error}} if $u->{error};
     $archive = shift;
+    die "FIXME: File::Unpack currently does not support multiple archives in one go.\n" if defined $archive;
   }
 
 # delete $u->{json};
