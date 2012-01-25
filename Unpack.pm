@@ -1,5 +1,5 @@
 #
-# (C) 2010-2011, jnw@cpan.org, all rights reserved.
+# (C) 2010-2012, jnw@cpan.org, all rights reserved.
 # Distribute under the same license as Perl itself.
 #
 #
@@ -78,10 +78,10 @@ File::Unpack - An aggressive bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... arc
 
 =head1 VERSION
 
-Version 0.50
+Version 0.51
 =cut
 
-our $VERSION = '0.50';
+our $VERSION = '0.51';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
@@ -401,12 +401,28 @@ sub log
     }
 }
 
+sub loggable_pathname
+{
+  my ($self, $file) = @_;
+
+  unless ($self->{log_fullpath})
+    {
+      # very frequently, files are inside the destdir
+      unless ($file =~ s{^\Q$self->{destdir}\E/}{})
+        {
+	  # less frequently, archives are logged inside the input dir
+	  $file =~ s{^\Q$self->{input}\E/}{\./input/./} if $self->{input};
+	}
+    }
+  return $file;
+}
+
 sub logf
 {
   my ($self,$file,$hash,$suff) = @_;
   $suff = "" unless defined $suff;
   my $json = $self->{json} ||= JSON->new()->ascii(1);
-  $file =~ s{^\Q$self->{destdir}\E/}{} unless $self->{log_fullpath};
+  $file = $self->loggable_pathname($file);
   if (my $fp = $self->{lfp})
     {
       $self->log(qq[{ "oops": "logf used before prolog??",\n"unpacked_files":{\n])
@@ -896,6 +912,7 @@ sub unpack
 	      return 0 if $self->{no_op};
 	      if (ref $unpacked)
 	        {
+		  # a ref here means, something went wrong.
 		  $data->{failed} = $h->{fmt_p};
 		  $data->{error} = $unpacked->{error};
 		  $self->logf($archive => $data);
@@ -932,16 +949,18 @@ sub unpack
 		}
 	      else
 		{
+		  # normal case: mime handler placed all 
+		  # in a directory called $unpacked
+
 		  if ($archive =~ m{^\Q$self->{destdir}\E})
 		    {
-		      $self->{done}{$archive} = $unpacked;
-
 		      # to delete it, we should know if it was created during unpack.
-		      $data->{cmd} = $h->{fmt_p};
-		      $data->{unpacked} = $unpacked;
-		      $self->logf($archive => $data);
-		      $self->{file_count}++;
 		    }
+		  $self->{done}{$archive} = $unpacked;
+		  $data->{cmd} = $h->{fmt_p};
+		  $data->{unpacked} = $self->loggable_pathname($unpacked);
+		  $self->logf($archive => $data);
+		  $self->{file_count}++;
 
 		  my $newdestdir = $unpacked;
 		  $newdestdir =~ s{/+[^/]+}{} unless -d $newdestdir;	        # make sure it is a directory
