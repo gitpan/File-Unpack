@@ -13,7 +13,9 @@
 # 2011-03-08, jw -- fixed usage of -l, added -p.
 # 2011-04-21, jw -- better format error messages, and stop after error.
 # 2011-05-12, jw -- added -n for no_op
-# 2012-02-16, jw -- added -A for archive_name_as_dir
+# 2012-02-16, jw -- added -A for archive_name_as_dir.
+#                   using {log_type} == 'PLAIN' unless -L
+# 2013-01-25, jw -- added -f for follow_file_symlinks.
 
 use Data::Dumper;
 $Data::Dumper::Terse = 1;
@@ -33,7 +35,7 @@ my $list_only;
 my $list_perlish;
 my @mime_helper_dirs;
 
-my %opt = ( verbose => 1, maxfilesize => '2.6G', one_shot => 0, no_op => 0, world_readable => 0, log_fullpath => 0, archive_name_as_dir => 0);
+my %opt = ( verbose => 1, maxfilesize => '2.6G', one_shot => 0, no_op => 0, world_readable => 0, log_fullpath => 0, archive_name_as_dir => 0, follow_file_symlinks => 0, log_type => 'PLAIN');
 
 push @mime_helper_dirs, "$FindBin::RealBin/helper" if -d "$FindBin::RealBin/helper";
 
@@ -58,6 +60,7 @@ GetOptions(
 	"use-mime-helper-dir|I|u=s" 		=> \@mime_helper_dirs,
 	"world-readable|world_readable|R+" 	=> \$opt{world_readable},
 	"archive-dirs|archive_dirs|A"		=> \$opt{archive_name_as_dir},
+	"follow-file-symlinks|f+" 		=> \$opt{follow_file_symlinks},
 ) or $help++;
 
 @mime_helper_dirs = split(/,/,join(',',@mime_helper_dirs));
@@ -76,8 +79,11 @@ Valid options are:
  -q     Be quiet, not verbose.
 
  -A --archive_dirs
- 	Use archive names as directories. Default: no directory for single files,
-	truncated or modified archive names otherwise.
+	Use exact archive names as subdirectories, modified by appending '._*'
+	to avoid collisions.  Default: use truncated and/or modified archive
+	names. E.g. example.zip is per default unpacked into 'example/'. With
+	-A, it is unpacked into 'example.zip._/'.  This does not apply for
+	single file archives. They are always unpacked without a directory.
 
  -C dir
  -D --destdir dir
@@ -97,6 +103,7 @@ Valid options are:
  --include-vcs  --no-include-vcs --vcs --no-vcs
  	Group switch for directory glob patterns of most version control systems.
 	This affects at least SCCS, RCS, CVS, .svn, .git, .hg, .osc .
+	The logfile has a {skipped}{exclude} counter.
         Default: exclude-vcs=$exclude_vcs .
 
  -1 --one-shot
@@ -107,7 +114,8 @@ Valid options are:
  
  -L --logfile  file.log
  	Specify a logfile, where freshly unpacked files are reported.
-	The format of the logfile is JSON; default is STDOUT.
+	When a logfile is specified, its format is JSON; 
+	default is STDOUT with format PLAIN.
  
  -l --list-helpers
         Overview of mime-type patterns and their helper commands.
@@ -139,7 +147,21 @@ Valid options are:
  	Include an additonal directory of mime helpers.
 	Useable multiple times. Later additions take precedence.
 
+ -f --follow-file-symlinks
+ 	Follow (and unpack) symlinks that point to files (or archives).
+	Used once, we follow only symlinks that are present before unpacking starts.
+	Used twice, we also follow symlinks that were unpacked from an archive.
+	Symlinks to directories or other (dangling) symlinks are always ignored.
+	The logfile has a {skipped}{symlink} counter.
+        Default: skip all symlinks.
+
 }) if $help;
+
+if (defined $opt{logfile})
+  {
+    $opt{log_type} = 'JSON';
+    $opt{logfile} = \*STDOUT if $opt{logfile} eq '-';
+  }
 
 $opt{logfile} ||= '/dev/null' if $list_only or $list_perlish or $mime_only or $opt{no_op};
 my $u = File::Unpack->new(%opt);

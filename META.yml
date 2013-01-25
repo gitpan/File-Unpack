@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               File-Unpack
-version:            0.53
+version:            0.55
 abstract:           A strong bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... archive unpacker, based on mime-types
 author:
     - Juergen Weigert <jnw@cpan.org>
