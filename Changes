@@ -1,7 +1,9 @@
-0.61	jw Tue May  7 20:04:15 CEST 2013
+0.62	jw Tue May  7 20:04:15 CEST 2013
 	- support mac pax files. They are gzipped cpio:
 	  'ASCII cpio archive (pre-SVR4 or odc)' and are reported by flm
-	  as application/octet-stream.
+	  as application/octet-stream. 
+	  
+	(0.61 had a defunct testsuite)
 
 0.60    jw, Mon Apr 29 16:22:33 CEST 2013
         - report text/x-application-xml instead of application/xml
