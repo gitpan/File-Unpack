@@ -42,4 +42,4 @@ requires:
   Pod::Usage: 0
   String::ShellQuote: 0
   Text::Sprintf::Named: 0
-version: 0.67
+version: 0.68
