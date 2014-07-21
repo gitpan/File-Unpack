@@ -79,12 +79,12 @@ File::Unpack - A strong bz2/gz/zip/tar/cpio/rpm/deb/cab/lzma/7z/rar/... archive 
 
 =head1 VERSION
 
-Version 0.68
+Version 0.69
 =cut
 
 # We'll have 1.x versions only after minfree() has a baseline implementation.
 # Please run perl Makefile.PL after changing the version here.
-our $VERSION = '0.68';
+our $VERSION = '0.69';
 
 POSIX::setlocale(&POSIX::LC_ALL, 'C');
 $ENV{PATH} = '/usr/bin:/bin';
